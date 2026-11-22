@@ -1,0 +1,12 @@
+{
+  "name": "poc-voxel-stack",
+  "private": true,
+  "description": "POC de sprite stacking: malha 3D (.glb) convertida em voxels e desenhada em fatias no navegador",
+  "scripts": {
+    "servir": "python -m http.server 8820 --bind 127.0.0.1",
+    "ficha": "node tools/gerar_ficha.cjs ficha.png"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

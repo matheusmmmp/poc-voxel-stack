@@ -1,0 +1,2160 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Estúdio Voxel — Agumon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* o estúdio: a cena ocupa a tela, a interface fica nas bordas (ver o vault, "POC voxel — análise de UX e estúdio") */
+  :root {
+    --vidro: rgba(12, 14, 24, .72); --vidro-forte: rgba(12, 14, 24, .88); --borda: rgba(255, 255, 255, .09);
+    --texto: #eef1f7; --texto-2: #a9b0c2; --texto-3: #6f7790;
+    --acento: #ff9f1c; --acento-2: #ffb84d; --acento-fundo: rgba(255, 159, 28, .16);
+    --ciano: #4fd1c5; --ciano-fundo: rgba(79, 209, 197, .14);
+    --raio: 14px; --raio-p: 9px; --t: 180ms cubic-bezier(.2, .8, .2, 1);
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;                                 /* os controles nativos (número, arquivo, caixa) no tema escuro */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0d16; overflow: hidden; font: 13px/1.35 var(--sans); color: var(--texto); }
+  canvas { display: block; image-rendering: pixelated; touch-action: none; cursor: grab; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .esconder { display: none !important; }
+
+  /* a camada da interface: não pega o ponteiro, só os blocos pegam (a roda na cena continua indo para a câmera) */
+  #ui { position: fixed; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  #ui > * { pointer-events: auto; }
+  .vidro { background: var(--vidro); backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+           border: 1px solid var(--borda); border-radius: var(--raio); box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
+  .mono { font-family: var(--mono); }
+  .rotulo { font: 600 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--texto-3); }
+  .tecla { font: 600 10px/1 var(--mono); padding: 3px 5px; border-radius: 5px; background: rgba(255, 255, 255, .08);
+           border: 1px solid rgba(255, 255, 255, .12); color: var(--texto-2); }
+
+  /* topo à esquerda: a marca e o estado */
+  #marca { position: absolute; left: 16px; top: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 210px; }
+  #marca h1 { margin: 0; font: 700 17px/1.1 var(--sans); letter-spacing: -.01em; }
+  #marca h1 span { color: var(--acento); }
+  #estado { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pilula { font: 500 11px/1 var(--mono); padding: 5px 8px; border-radius: 99px; background: rgba(255, 255, 255, .06); color: var(--texto-2); }
+  .pilula b { color: var(--texto); font-weight: 600; }
+
+  /* topo à direita: a cena e as ações gerais */
+  #topo { position: absolute; right: 16px; top: 16px; display: flex; gap: 8px; align-items: center; }
+  .segmentado { display: flex; padding: 4px; gap: 2px; }
+  .segmentado button { border: 0; background: transparent; padding: 7px 11px; border-radius: var(--raio-p); color: var(--texto-2);
+                       font-weight: 500; transition: background var(--t), color var(--t); }
+  .segmentado button:hover { color: var(--texto); background: rgba(255, 255, 255, .06); }
+  .segmentado button[aria-pressed="true"] { background: var(--acento-fundo); color: var(--acento-2); }
+  .icone { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--borda); background: var(--vidro);
+           backdrop-filter: blur(14px); border-radius: 12px; transition: background var(--t), transform var(--t), color var(--t); color: var(--texto-2); }
+  .icone:hover { color: var(--texto); background: var(--vidro-forte); }
+  .icone:active, .chip:active, .preset:active, .botao:active { transform: scale(.96); }
+  .icone[aria-pressed="true"] { color: var(--acento); border-color: rgba(255, 159, 28, .45); }
+  .icone svg, .preset svg, .botao svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* o trilho da câmera, à esquerda */
+  #trilho { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); padding: 8px; display: flex; flex-direction: column; gap: 4px; width: 76px; }
+  #trilho .rotulo { text-align: center; padding: 4px 0 6px; }
+  .preset { border: 0; background: transparent; border-radius: 10px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+            color: var(--texto-2); font-size: 11px; font-weight: 500; transition: background var(--t), color var(--t), transform var(--t); }
+  .preset:hover { background: rgba(255, 255, 255, .06); color: var(--texto); }
+  .preset[aria-pressed="true"] { background: var(--ciano-fundo); color: var(--ciano); }
+  .separador { height: 1px; background: var(--borda); margin: 4px 6px; }
+
+  /* a doca das animações, embaixo */
+  #doca { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(860px, calc(100vw - 32px)); padding: 10px 12px 12px;
+          display: flex; flex-direction: column; gap: 10px; }
+  #abas { display: flex; gap: 4px; align-items: center; }
+  #abas button { border: 0; background: transparent; padding: 6px 10px; border-radius: 99px; color: var(--texto-3); font-weight: 600; font-size: 12px;
+                 transition: background var(--t), color var(--t); }
+  #abas button:hover { color: var(--texto); }
+  #abas button[aria-selected="true"] { background: rgba(255, 255, 255, .08); color: var(--texto); }
+  #abas .espaco { flex: 1; }
+  #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; border: 1px solid var(--borda); background: rgba(255, 255, 255, .04); border-radius: 12px; padding: 9px 12px 8px;
+          display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 116px; text-align: left;
+          transition: background var(--t), border-color var(--t), transform var(--t); }
+  .chip:hover { background: rgba(255, 255, 255, .08); }
+  .chip .nome { font-weight: 600; font-size: 13px; color: var(--texto); white-space: nowrap; }
+  .chip .meta { display: flex; gap: 6px; align-items: center; }
+  .chip .codigo { font: 500 10px/1 var(--mono); color: var(--texto-3); }
+  .chip[aria-pressed="true"] { background: var(--acento-fundo); border-color: rgba(255, 159, 28, .55); }
+  .chip[aria-pressed="true"] .nome { color: var(--acento-2); }
+  .chip.carregando { opacity: .6; }
+  #linha { display: flex; gap: 10px; align-items: center; }
+  #linha .icone { width: 34px; height: 34px; border-radius: 10px; }
+  #barra { flex: 1; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+  #barra i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--acento), var(--acento-2)); border-radius: 99px; }
+  #tocando { min-width: 150px; font-size: 12px; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tocando b { color: var(--texto); font-weight: 600; }
+  #velocidade { padding: 3px; }
+  #velocidade button { padding: 5px 8px; font: 600 11px/1 var(--mono); }
+
+  /* a gaveta do render, à direita */
+  #gaveta { position: absolute; right: 16px; top: 72px; width: 292px; max-height: calc(100vh - 240px); overflow: auto; padding: 14px;
+            display: flex; flex-direction: column; gap: 14px; transition: transform var(--t), opacity var(--t); }
+  #gaveta.fechada { transform: translateX(24px); opacity: 0; pointer-events: none; }
+  .grupo { display: flex; flex-direction: column; gap: 10px; }
+  .campo { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; }
+  .campo label { color: var(--texto-2); font-size: 12px; }
+  .campo output { font: 500 11px/1 var(--mono); color: var(--texto); }
+  .campo input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--acento); height: 18px; }
+  .linha-botoes { display: flex; gap: 6px; flex-wrap: wrap; }
+  .botao { border: 1px solid var(--borda); background: rgba(255, 255, 255, .05); border-radius: 10px; padding: 8px 10px; display: inline-flex; gap: 6px;
+           align-items: center; font-weight: 500; transition: background var(--t), transform var(--t); }
+  .botao:hover { background: rgba(255, 255, 255, .1); }
+  .botao.primario { background: var(--acento); color: #1b1206; border-color: transparent; font-weight: 600; }
+  .botao.primario:hover { background: var(--acento-2); }
+  .alternar { display: flex; justify-content: space-between; align-items: center; color: var(--texto-2); font-size: 12px; }
+  .alternar input { accent-color: var(--acento); width: 16px; height: 16px; }
+  select.campo-sel { background: rgba(255, 255, 255, .06); border: 1px solid var(--borda); border-radius: 8px; padding: 5px 8px; }
+  #petInfo { font-size: 11px; color: var(--texto-3); }
+  .arquivo { position: relative; overflow: hidden; }
+  .arquivo input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  /* o aviso curto, o carregamento, a ajuda e o modo foto */
+  #aviso { position: absolute; left: 50%; top: 18px; transform: translate(-50%, -8px); padding: 9px 14px; opacity: 0; font-weight: 500;
+           transition: opacity var(--t), transform var(--t); pointer-events: none; white-space: nowrap; }
+  #aviso.ver { opacity: 1; transform: translate(-50%, 0); }
+  #aviso b { color: var(--acento-2); }
+  #carga { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 32px)); padding: 20px 22px;
+           display: flex; flex-direction: column; gap: 12px; transition: opacity 400ms ease, transform 400ms ease; }
+  #carga.saindo { opacity: 0; transform: translate(-50%, -46%); pointer-events: none; }
+  #carga h2 { margin: 0; font: 700 18px/1.2 var(--sans); }
+  #carga .trilha { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+  #carga .trilha i { display: block; height: 100%; width: 35%; background: linear-gradient(90deg, transparent, var(--acento), transparent);
+                     animation: correr 1.1s ease-in-out infinite; }
+  @keyframes correr { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  #carga ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--texto-3); }
+  #carga li::before { content: "○"; display: inline-block; width: 18px; color: var(--texto-3); }
+  #carga li.feito { color: var(--texto-2); } #carga li.feito::before { content: "●"; color: var(--acento); }
+  #carga li.agora { color: var(--texto); } #carga li.agora::before { content: "◐"; color: var(--acento-2); }
+  #info { font: 500 11px/1.4 var(--mono); color: var(--texto-3); }
+  #ajuda { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 6, 12, .55); }
+  #ajuda .vidro { width: min(520px, calc(100vw - 32px)); padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+  #ajuda h2 { margin: 0; font: 700 18px/1.2 var(--sans); }
+  #ajuda dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; }
+  #ajuda dt { display: flex; gap: 4px; justify-content: flex-end; } #ajuda dd { margin: 0; color: var(--texto-2); }
+  #ficha { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 6, 12, .7); }
+  #ficha .vidro { width: min(1400px, calc(100vw - 32px)); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  #ficha img { width: 100%; height: auto; border-radius: 10px; image-rendering: auto; }
+  #ficha a.botao { text-decoration: none; }
+  #dica { position: absolute; left: 50%; bottom: var(--sobre-doca, 170px); transform: translateX(-50%); padding: 7px 10px; display: flex; gap: 10px;
+          align-items: center; font-size: 12px; color: var(--texto-2); white-space: nowrap; transition: opacity 600ms ease; }
+  #dica.apagada { opacity: 0; pointer-events: none; }
+  body.foto #ui > *:not(#fotoDica) { opacity: 0 !important; pointer-events: none !important; transition: opacity 240ms ease; }
+  #fotoDica { position: absolute; right: 16px; bottom: 16px; padding: 7px 10px; font-size: 12px; color: var(--texto-2); opacity: 0; transition: opacity 600ms ease; pointer-events: none; }
+  body.foto #fotoDica.ver { opacity: 1; }
+
+  /* o celular: o trilho vira uma fila no topo, a doca rola e a gaveta vira uma folha de baixo */
+  @media (max-width: 760px) {
+    #marca { display: none; }
+    #topo { left: 12px; right: 12px; top: 12px; justify-content: space-between; gap: 6px; } #cena button { padding: 7px 9px; font-size: 12px; }
+    #topo .icone { width: 36px; height: 36px; }
+    #trilho { top: 60px; left: 12px; right: 12px; transform: none; width: auto; flex-direction: row; overflow-x: auto; padding: 5px; }
+    #abas .rotulo { display: none; } #aviso { top: 112px; }
+    #trilho .rotulo, #trilho .separador { display: none; } .preset { min-width: 58px; }
+    #doca { bottom: 12px; padding: 8px; } #tocando { display: none; } .chip { min-width: 100px; }
+    #gaveta { left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; max-height: 62vh; z-index: 2; }
+    #gaveta.fechada { transform: translateY(24px); }
+    #dica { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <header id="marca" class="vidro">
+    <span class="rotulo">Voxel stack · POC</span>
+    <h1>Agumon <span>em fatias</span></h1>
+    <div id="estado"><span class="pilula" id="pMs">— ms</span><span class="pilula" id="pVox">— voxels</span><span class="pilula" id="pArte">— px</span></div>
+  </header>
+
+  <div id="topo">
+    <div class="segmentado vidro" id="cena" role="group" aria-label="Cena">
+      <button data-fundo="claro" aria-pressed="true">Estúdio</button>
+      <button data-fundo="noite" aria-pressed="false">Noite</button>
+      <button data-fundo="ilha" aria-pressed="false">Ilha</button>
+    </div>
+    <button class="icone" id="bExplodir" title="Explodir fatias (X)"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><path d="M12 3v2M12 19v2"/></svg></button>
+    <button class="icone" id="bRender" title="Render e luz" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+    <button class="icone" id="bFicha" title="Ficha do asset: as fatias e o stack"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M14 13h4M14 16h4"/></svg></button>
+    <button class="icone" id="bFoto" title="Modo foto (H)"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+    <button class="icone" id="bAjuda" title="Atalhos (?)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"/></svg></button>
+  </div>
+
+  <nav id="trilho" class="vidro" aria-label="Câmera">
+    <span class="rotulo">Câmera</span>
+    <button class="preset" data-preset="tres" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>3/4</button>
+    <button class="preset" data-preset="frente"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><circle cx="12" cy="12" r="2"/></svg>Frente</button>
+    <button class="preset" data-preset="perfil"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M15 8l4 4-4 4"/></svg>Perfil</button>
+    <button class="preset" data-preset="costas"><svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M9 8l-4 4 4 4"/></svg>Costas</button>
+    <button class="preset" data-preset="topo"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 9h16M4 14h16"/></svg>Topo</button>
+    <button class="preset" data-preset="heroi"><svg viewBox="0 0 24 24"><path d="M4 20l8-16 8 16"/><path d="M8 13h8"/></svg>Herói</button>
+    <div class="separador"></div>
+    <button class="preset" id="bGiro" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/></svg>Girar</button>
+  </nav>
+
+  <section id="doca" class="vidro" aria-label="Animações">
+    <div id="abas" role="tablist"></div>
+    <div id="chips"></div>
+    <div id="linha">
+      <button class="icone" id="bTocar" title="Pausar / continuar (P)"><svg viewBox="0 0 24 24" id="icTocar"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg></button>
+      <button class="icone" id="bRepetir" title="Repetir o clipe" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
+      <div id="tocando"><b>Parado</b> · bn01</div>
+      <div id="barra"><i></i></div>
+      <div class="segmentado" id="velocidade" role="group" aria-label="Velocidade">
+        <button data-tempo="0.25" aria-pressed="false">¼×</button><button data-tempo="0.5" aria-pressed="false">½×</button><button data-tempo="1" aria-pressed="true">1×</button>
+      </div>
+    </div>
+  </section>
+
+  <aside id="gaveta" class="vidro fechada" aria-label="Render e luz">
+    <div class="grupo">
+      <span class="rotulo">Luz</span>
+      <div class="campo"><label for="sol">Sol · direção</label><output id="oSol">225°</output><input id="sol" type="range" min="0" max="360" step="1" value="225"></div>
+      <div class="campo"><label for="solAlt">Sol · altura</label><output id="oSolAlt">50°</output><input id="solAlt" type="range" min="15" max="85" step="1" value="50"></div>
+    </div>
+    <div class="grupo">
+      <span class="rotulo">Câmera e pixel</span>
+      <div class="campo"><label for="pitch">Inclinação</label><output id="oPitch">0,62</output><input id="pitch" type="range" min="0.35" max="1" step="0.01" value="0.62"></div>
+      <div class="campo"><label for="zoom">Tamanho do pixel</label><output id="oZoom">4</output><input id="zoom" type="range" min="2" max="9" step="1" value="4"></div>
+      <div class="campo"><label for="gap">Fatias abertas</label><output id="oGap">0</output><input id="gap" type="range" min="0" max="3" step="0.1" value="0"></div>
+      <label class="alternar">Contorno <input id="outline" type="checkbox" checked></label>
+      <label class="alternar">Câmera gira sozinha <input id="turn" type="checkbox"></label>
+    </div>
+    <div class="grupo">
+      <span class="rotulo">Modelo</span>
+      <label class="alternar">Altura em voxels <input id="altura" class="campo-sel mono" type="number" min="24" max="120" value="84" style="width:66px"></label>
+      <div class="linha-botoes">
+        <button class="botao" id="stack"><svg viewBox="0 0 24 24"><path d="M4 17h16M6 12h12M8 7h8"/></svg>Empilhar de novo</button>
+        <button class="botao" id="petBtn">Pet: Agumon</button>
+        <span class="botao arquivo"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg>Outro .glb<input id="arquivo" type="file" accept=".glb,.gltf"></span>
+      </div>
+      <div id="petInfo"></div>
+    </div>
+    <!-- os controles antigos que o motor ainda lê; a doca faz o papel deles -->
+    <div class="esconder"><button id="view"></button><select id="clipSel"></select><button id="playClip"></button><input id="loopClip" type="checkbox"></div>
+  </aside>
+
+  <div id="carga" class="vidro">
+    <span class="rotulo">Convertendo a malha em voxels</span>
+    <h2>Fatiando o Agumon…</h2>
+    <div class="trilha"><i></i></div>
+    <ol id="etapas"><li data-e="textura">Lendo as texturas do corpo e do rosto</li><li data-e="parado">Parado · bn01</li><li data-e="correr">Correr · br01</li><li data-e="sim">Sim · fq01</li></ol>
+    <div id="cargaTxt" class="mono" style="font-size:11px;color:var(--texto-3)">carregando…</div>
+    <div id="info" class="esconder"></div>
+  </div>
+
+  <div id="dica" class="vidro"><span class="tecla">arrastar</span> girar <span class="tecla">roda</span> zoom <span class="tecla">1–9</span> golpes <span class="tecla">H</span> foto <span class="tecla">?</span> tudo</div>
+  <div id="aviso" class="vidro"></div>
+  <div id="fotoDica" class="vidro">Modo foto · <span class="tecla">H</span> volta</div>
+
+  <div id="ficha" class="esconder" role="dialog" aria-label="Ficha do asset">
+    <div class="vidro">
+      <img id="fichaImg" alt="Ficha do asset: as fatias do Agumon e o stack 3D">
+      <div class="linha-botoes"><a class="botao primario" id="fichaBaixar" download="ficha_agumon_sprite_stack.png">Baixar PNG</a><button class="botao" id="fichaFechar">Fechar</button></div>
+    </div>
+  </div>
+  <div id="ajuda" class="esconder" role="dialog" aria-label="Atalhos">
+    <div class="vidro">
+      <span class="rotulo">Atalhos</span>
+      <h2>Como mexer no estúdio</h2>
+      <dl>
+        <dt><span class="tecla">arrastar</span></dt><dd>gira (horizontal) e inclina (vertical), com inércia</dd>
+        <dt><span class="tecla">roda</span></dt><dd>zoom · <span class="tecla">shift</span>+roda gira · <span class="tecla">alt</span>+roda inclina</dd>
+        <dt><span class="tecla">Q</span><span class="tecla">R</span></dt><dd>gira 45°</dd>
+        <dt><span class="tecla">WASD</span></dt><dd>anda · <span class="tecla">espaço</span> pula · <span class="tecla">E</span> "sim"</dd>
+        <dt><span class="tecla">1</span>–<span class="tecla">9</span></dt><dd>garra, mordida, Pepper Breath I e II, esquiva, dano, vitória, comer, "não"</dd>
+        <dt><span class="tecla">P</span></dt><dd>congela o tempo (a câmera continua girando)</dd>
+        <dt><span class="tecla">X</span></dt><dd>explode e junta as fatias</dd>
+        <dt><span class="tecla">H</span></dt><dd>modo foto: esconde a interface</dd>
+        <dt><span class="tecla">C</span></dt><dd>próximo preset de câmera</dd>
+      </dl>
+      <div class="linha-botoes"><button class="botao primario" id="fecharAjuda">Entendi</button></div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+// ============================================================================================================
+// Renderizador de sprite stacking, escrito do zero para esta POC (só a ideia vem do moon-stack: cada camada z de
+// um modelo voxel é uma fatia plana, girada e desenhada 1 px acima da anterior; num pixel da tela a fatia mais
+// alta é a mais próxima, então um buffer de profundidade em z ordena tudo; a luz é por voxel, pela normal).
+// ============================================================================================================
+
+const RAMPS = {               // escuro -> claro; um pixel é (material, nível)
+  grass: ["#1d3823", "#26482b", "#2f5831", "#3a6936", "#477a3d", "#578c46", "#6a9e50", "#80b15d"],
+  dirt:  ["#3a2a1e", "#4d3826", "#62472f", "#78583a", "#8e6a47", "#a57d56", "#bb9266"],
+  sand:  ["#5a4a33", "#7a6646", "#9a845c", "#b7a174", "#d0bb8c", "#e4d2a5"],
+  water: ["#0e2236", "#14304a", "#1b4262", "#24577e", "#30709c", "#4a8cb8", "#6fa9cf"],
+  mint:  ["#123431", "#1a4943", "#245f56", "#30786b", "#3f9282", "#52ab97", "#6fc4ac", "#97dcc2"],
+  cream: ["#4a3b2a", "#6b5739", "#8d774f", "#ae9867", "#cbb782", "#e2d2a0", "#f4e8c2", "#fff8e2"],
+  coral: ["#4a1a22", "#6e2630", "#93343d", "#b5464a", "#d25f5b", "#e97f71", "#f6a48e", "#ffc9b2"],
+  pink:  ["#6e3040", "#93475a", "#b86378", "#d78398", "#eea7b8"],
+  dark:  ["#07090d", "#0f1219", "#191d26", "#252a35", "#343a47"],
+  white: ["#9aa3ad", "#c4cbd2", "#e6eaee", "#ffffff"],
+  bark:  ["#22150d", "#332014", "#472e1c", "#5b3d26", "#714d31", "#89603e"],
+  leaf:  ["#122c1a", "#183d22", "#1f502a", "#286433", "#33793c", "#438f46", "#58a553", "#74bb63"],
+  stone: ["#232529", "#32353b", "#44474e", "#585b63", "#6e7279", "#868a90", "#a0a3a8", "#bec0c3"],
+  paper: ["#9fb0a8", "#bccbc4", "#d3dfd9", "#e6eeea", "#f3f7f5"],
+  // os fundos do estúdio (estudio.html): creme quente e azul-noite, os dois contrastando com o laranja do Agumon
+  estudioClaro: ["#b9a690", "#cbb9a3", "#dacab6", "#e7dac8", "#f1e7d9", "#f8f2e8"],
+  estudioNoite: ["#080a14", "#0d1120", "#13192e", "#1a2240", "#222d52", "#2c3a66"],
+};
+const MATS = [];
+const MAT = {};                                                       // 0 = vazio
+const MAXL = 8;
+const NLEV = new Int16Array(256);
+const LUT = new Uint32Array(256 * MAXL);
+// o traço do jogo (o casco "outline" inflado pela normal) é mais grosso que 1 pixel de arte na silhueta: o personagem com textura
+// ganha mais um pixel para fora, sobre o chão, sem comer o olho nem a boca por dentro (as linhas internas seguem com 1)
+const CONTORNO_FORA = true;
+const CONTORNO_INTERNO = 4.5;     // salto de profundidade que já risca linha interna no personagem com textura (os objetos seguem com 6)
+const TOM_CEL = { brilho: 1.12, saturacao: 1.15, calor: 0.35 };     // o tom dos materiais de textura (rampFromRGB)
+const CEL = new Uint8Array(256);                                    // 1 = material vindo de textura (luz em degraus)
+function addRamp(name, r) {
+  if (MAT[name]) return MAT[name];
+  MATS.push(name); const id = MATS.length; MAT[name] = id; NLEV[id] = r.length;
+  for (let l = 0; l < MAXL; l++) {
+    const h = r[Math.min(l, r.length - 1)];
+    const R = parseInt(h.slice(1, 3), 16), G = parseInt(h.slice(3, 5), 16), B = parseInt(h.slice(5, 7), 16);
+    LUT[id * MAXL + l] = ((255 << 24) | (B << 16) | (G << 8) | R) >>> 0;
+  }
+  return id;
+}
+for (const [k, r] of Object.entries(RAMPS)) addRamp(k, r);
+
+/** Uma rampa de 8 níveis a partir de uma cor sRGB: sombras puxam para um azul escuro, luzes para um branco quente. */
+function rampFromRGB(r, g, b) {
+  // a cor vem da paleta do personagem (buildPalette, ~40 cores), então cabe no Uint8 dos materiais sem quantizar aqui
+  const q = [r, g, b].map((v) => Math.round(v));
+  const key = "rgb" + q.join("_");
+  if (MAT[key]) return MAT[key];
+  if (MATS.length >= 255) throw new Error("materiais esgotados (Uint8): paleta grande demais");
+  CEL[MATS.length + 1] = 1;                       // material de textura: luz em degraus (shade)
+  // o tom do cel: no jogo a luz chave e o ambiente clareiam e saturam a textura; aqui o nível 5 ganha o mesmo (TOM_CEL)
+  const mx = Math.max(...q), mn = Math.min(...q);
+  if (mx > 0) {
+    const v = Math.min(255, mx * TOM_CEL.brilho), s0 = (mx - mn) / mx, s = Math.min(1, s0 * TOM_CEL.saturacao);
+    for (let i = 0; i < 3; i++) { const t = s0 > 0 ? (mx - q[i]) / (mx - mn) : 0; q[i] = v * (1 - s * t); }
+  }
+  const out = [];
+  for (let l = 0; l < 8; l++) {
+    // rampa curta como o cel do jogo: o nível 5 é a cor; o 7 clareia um pouco; a sombra esquenta (o verde e o azul caem mais
+    // depressa que o vermelho), como a sombra laranja-avermelhada do toon do DSTS, em vez de azular
+    const f = 0.42 + l * 0.116;
+    let c;
+    if (f <= 1) { const d = 1 - f; c = [q[0] * f, q[1] * f * (1 - TOM_CEL.calor * d), q[2] * f * (1 - 2 * TOM_CEL.calor * d)]; }
+    else { const k = Math.min((f - 1) * 0.9, 0.6); c = q.map((v, i) => v * (1 - k) + [255, 246, 222][i] * k); }
+    out.push("#" + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
+  }
+  return addRamp(key, out);
+}
+
+function hash3(x, y, z) {
+  let h = Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663) ^ Math.imul(z | 0, 83492791);
+  h = Math.imul(h ^ (h >>> 13), 0x5bd1e995); h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+function rng(seed) { let s = seed >>> 0; return () => ((s = Math.imul(s ^ (s >>> 15), 2246822519) + 0x9e3779b9 >>> 0) / 4294967296); }
+
+// ---------------------------------------------------------------- formas (coordenadas locais, centro no chão)
+const ell = (cx, cy, cz, rx, ry, rz) => (X, Y, Z) => ((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2 + ((Z - cz) / rz) ** 2 <= 1;
+const and = (...fs) => (X, Y, Z) => fs.every((f) => f(X, Y, Z));
+function seg(a, b, r0, r1) {          // cápsula de a até b, raio de r0 a r1
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2;
+  return (X, Y, Z) => {
+    const px = X - a[0], py = Y - a[1], pz = Z - a[2];
+    const t = Math.max(0, Math.min(1, (px * d[0] + py * d[1] + pz * d[2]) / L2));
+    const r = r0 + (r1 - r0) * t;
+    return (px - t * d[0]) ** 2 + (py - t * d[1]) ** 2 + (pz - t * d[2]) ** 2 <= r * r;
+  };
+}
+
+class Vox {
+  constructor(nx, ny, nz, cx, cy) {
+    Object.assign(this, { nx, ny, nz, cx, cy });
+    const n = nx * ny * nz;
+    this.m = new Uint8Array(n); this.t = new Int8Array(n); this.g = new Uint8Array(n);
+  }
+  put(f, mat, { tw = 0, over = true, glow = 0, noise = 0, grain = 1, seed = 0 } = {}) {
+    const M = MAT[mat], { nx, ny, nz, cx, cy } = this;
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+      if (!over && this.m[i]) continue;
+      if (!f(x + 0.5 - cx, y + 0.5 - cy, z + 0.5)) continue;
+      this.m[i] = M; this.g[i] = glow;
+      this.t[i] = tw + (noise ? Math.round((hash3(x / grain, y / grain, z / grain + seed * 31) * 2 - 1) * noise) : 0);
+    }
+  }
+}
+
+function blur(a, nx, ny, nz, r) {     // média móvel separável nos três eixos
+  const out = new Float32Array(a.length), tmp = new Float32Array(a.length);
+  const pass = (src, dst, len, stride, count, startOf) => {
+    for (let c = 0; c < count; c++) {
+      const s0 = startOf(c);
+      for (let i = 0; i < len; i++) {
+        let sum = 0, n = 0;
+        for (let j = Math.max(0, i - r); j <= Math.min(len - 1, i + r); j++) { sum += src[s0 + j * stride]; n++; }
+        dst[s0 + i * stride] = sum / (2 * r + 1);   // fora da grade conta como vazio
+      }
+    }
+  };
+  pass(a, tmp, nx, 1, ny * nz, (c) => c * nx);
+  pass(tmp, out, ny, nx, nx * nz, (c) => (c / nx | 0) * nx * ny + (c % nx));
+  pass(out, tmp, nz, nx * ny, nx * ny, (c) => c);
+  return tmp;
+}
+
+/** Modelo pronto: voxels cheios, normal e oclusão por voxel, extensão de cada fatia. */
+function compile(v) {
+  const { nx, ny, nz, m } = v, N = nx * ny * nz;
+  const occ = new Float32Array(N);
+  for (let i = 0; i < N; i++) occ[i] = m[i] ? 1 : 0;
+  const b = blur(occ, nx, ny, nz, 2);
+  const at = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) ? 0 : b[(z * ny + y) * nx + x];
+  const cells = [], nrm = [], ao = [], altJ = [], altM = [];
+  const ext = new Int16Array(nz * 4);
+  for (let k = 0; k < nz; k++) { ext[k * 4] = nx; ext[k * 4 + 1] = 0; ext[k * 4 + 2] = ny; ext[k * 4 + 3] = 0; }
+  for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+    if (!m[i]) continue;
+    let gx = at(x - 1, y, z) - at(x + 1, y, z), gy = at(x, y - 1, z) - at(x, y + 1, z), gz = at(x, y, z - 1) - at(x, y, z + 1);
+    if (v.n && (v.n[i * 3] || v.n[i * 3 + 1] || v.n[i * 3 + 2])) {      // normal da malha, quando o voxel veio de um triângulo
+      const k = 0.9; gx = v.n[i * 3] * k + gx * (1 - k); gy = v.n[i * 3 + 1] * k + gy * (1 - k); gz = v.n[i * 3 + 2] * k + gz * (1 - k);
+    }
+    const L = Math.hypot(gx, gy, gz);
+    if (L < 1e-4) { gx = 0; gy = 0; gz = 1; } else { gx /= L; gy /= L; gz /= L; }
+    if (v.alt && v.alt.has(i)) { altJ.push(cells.length); altM.push(v.alt.get(i)); }
+    cells.push(i); nrm.push(gx, gy, gz); ao.push(b[i]);
+    const e = z * 4;
+    if (x < ext[e]) ext[e] = x; if (x + 1 > ext[e + 1]) ext[e + 1] = x + 1;
+    if (y < ext[e + 2]) ext[e + 2] = y; if (y + 1 > ext[e + 3]) ext[e + 3] = y + 1;
+  }
+  const C = Int32Array.from(cells);
+  const mats = new Uint8Array(C.length), tw = new Int8Array(C.length), gl = new Uint8Array(C.length);
+  for (let j = 0; j < C.length; j++) { mats[j] = m[C[j]]; tw[j] = v.t[C[j]]; gl[j] = v.g[C[j]]; }
+  const col = new Int16Array(N).fill(-1);
+  // o olho de cada célula (0 = nenhum; 1 e 2 pelo lado do x em relação ao centro da grade), para o brilho na tela
+  let olhoDe = null;
+  if (v.o) { olhoDe = new Uint8Array(N); for (let j = 0; j < C.length; j++) if (v.o[C[j]]) olhoDe[C[j]] = (C[j] % nx) < v.cx ? 1 : 2; }
+  return { nx, ny, nz, cx: v.cx, cy: v.cy, cells: C, mats, tw, gl, nrm: Float32Array.from(nrm), ao: Float32Array.from(ao), col, ext,
+           radius: Math.hypot(nx, ny) / 2 + 2, shadedFor: null,
+           olhoDe, matBrilho: v.matBrilho,
+           fechadoJ: altJ.length ? Int32Array.from(altJ) : null, fechadoM: altJ.length ? Uint8Array.from(altM) : null };
+}
+
+// ---------------------------------------------------------------- malha (.glb) -> voxels
+// O glTF tem Y para cima e a frente em +Z; aqui z é para cima e a frente é +y: (X, Y, Z) do glTF vira (X, Z, Y).
+const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _n = new THREE.Vector3();
+
+// ---- texturas: os pixels de cada textura, lidos uma vez (até 512 px; o rosto precisa da íris e da pálpebra)
+const textureCache = new WeakMap();
+function texturePixels(texture, maxSize = 512) {
+  if (!texture?.image) return null;
+  if (textureCache.has(texture)) return textureCache.get(texture);
+  const image = texture.image, sw = image.width || image.naturalWidth, sh = image.height || image.naturalHeight;
+  if (!sw || !sh) throw new Error(`textura sem tamanho: ${texture.name || "?"}`);
+  const scale = Math.min(1, maxSize / Math.max(sw, sh));
+  const width = Math.max(1, Math.round(sw * scale)), height = Math.max(1, Math.round(sh * scale));
+  const cv = document.createElement("canvas"); cv.width = width; cv.height = height;
+  const c = cv.getContext("2d", { willReadFrequently: true }); c.drawImage(image, 0, 0, width, height);
+  if (texture.matrixAutoUpdate) texture.updateMatrix();
+  const result = { width, height, data: c.getImageData(0, 0, width, height).data,
+    matrix: Array.from(texture.matrix.elements), wrapS: texture.wrapS, wrapT: texture.wrapT, flipY: texture.flipY };
+  textureCache.set(texture, result);
+  return result;
+}
+function wrapUV(v, mode) {
+  if (mode === THREE.RepeatWrapping) return ((v % 1) + 1) % 1;
+  if (mode === THREE.MirroredRepeatWrapping) { const q = ((v % 2) + 2) % 2; return q <= 1 ? q : 2 - q; }
+  return Math.max(0, Math.min(0.999999, v));
+}
+/** o texel (r, g, b, a em 0..255) de uma textura no ponto (u, v) */
+const _tx = [0, 0, 0, 0];
+function texel(map, u, v, dv = 0) {
+  const m = map.matrix, tu = m[0] * u + m[3] * v + m[6], tv = m[1] * u + m[4] * v + m[7] + dv;
+  const uu = wrapUV(tu, map.wrapS), vv = wrapUV(tv, map.wrapT);
+  const x = Math.min(map.width - 1, Math.floor(uu * map.width));
+  const y = Math.min(map.height - 1, Math.floor((map.flipY ? 1 - vv : vv) * map.height));
+  const i = (y * map.width + x) * 4, d = map.data;
+  _tx[0] = d[i]; _tx[1] = d[i + 1]; _tx[2] = d[i + 2]; _tx[3] = d[i + 3];
+  return _tx;
+}
+
+/**
+ * Como cada malha vira cor. Um export do dsts-extractor traz o papel de cada material em extras.dsts_render.role:
+ *  - "outline_inflation": o casco do contorno do jogo (inflado pela normal no shader). Fica FORA: na grade ele envolveria o corpo
+ *    inteiro com uma cor lisa e esconderia a textura. O contorno daqui é o passe 2D (outline()).
+ *  - "eye_shine": o domo do brilho do olho, somado por cima. Fica fora; o olho sai do rosto.
+ *  - o rosto (texture_indices com OverlayColorSampler3): pele a01 no UV0, íris p01 no UV1 e a folha das pálpebras b01 no UV2,
+ *    compostas como no jogo: mix(mix(pele, íris, íris.a), pálpebra, pálpebra.a). A folha tem 4 linhas; a 0 é o olho aberto.
+ *  - o resto: o mapa de cor (DiffuseColor) no UV que o material pede, vezes a cor do material.
+ * Um .glb qualquer cai no último caso (mapa de cor, ou só a cor do material).
+ */
+const LINHAS_OLHO = 4;
+async function prepararMalhas(gltf) {
+  const tex = (i) => gltf.parser.getDependency("texture", i);
+  const malhas = [];
+  gltf.scene.traverse((o) => { if (o.isMesh) malhas.push(o); });
+  for (const o of malhas) {
+    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+    const ud = mat.userData || {}, role = ud.dsts_render?.role, idx = ud.dsts?.texture_indices || {};
+    const g = o.geometry, base = mat.color ? mat.color.getHex() : 0xcccccc;
+    const corBase = [(base >> 16) & 255, (base >> 8) & 255, base & 255];
+    if (role === "outline_inflation" || role === "eye_shine" || mat.name === "outline") { o.userData.vox = { pular: true, role }; continue; }
+    if (idx.OverlayColorSampler3 !== undefined && idx.OverlayNormalSampler !== undefined && g.attributes.uv1 && g.attributes.uv2) {
+      const [pele, iris, palp] = await Promise.all([idx.DiffuseColor, idx.OverlayNormalSampler, idx.OverlayColorSampler3].map(tex));
+      const irisPx = texturePixels(iris);
+      o.userData.vox = { tipo: "rosto", pele: texturePixels(pele), iris: irisPx, palp: texturePixels(palp),
+                         uv: [g.attributes.uv, g.attributes.uv1, g.attributes.uv2], corBase };
+      o.userData.vox.dentes = pecasBrancas(g, o.userData.vox.pele, g.attributes.uv);
+      continue;
+    }
+    let map = mat.map;
+    if (!map && idx.DiffuseColor !== undefined) map = await tex(idx.DiffuseColor);
+    const canal = map ? (map.channel ? `uv${map.channel}` : "uv") : null;
+    o.userData.vox = map && g.attributes[canal]
+      ? { tipo: "mapa", mapa: texturePixels(map), uv: [g.attributes[canal]], corBase }
+      : { tipo: "cor", corBase };
+    if (o.userData.vox.tipo === "mapa") o.userData.vox.dentes = pecasBrancas(g, o.userData.vox.mapa, g.attributes[canal]);
+  }
+  return malhas;
+}
+
+/**
+ * O brilho do olho. No jogo ele é o domo eye_shine, um matcap somado: fica sempre do mesmo lado do olho para quem olha. Aqui os
+ * voxels da íris aberta ficam marcados (rasterize conta as amostras com a íris por cima e a pálpebra aberta; compile guarda o
+ * olho de cada célula, 1 ou 2 pelo lado). drawInst anota em F.olh qual olho cobre cada pixel e, depois do contorno,
+ * brilhoDosOlhos() pinta o reflexo no referencial da TELA: um ponto pequeno embaixo, do lado oposto ao alto da íris
+ * (BRILHO_OLHO.formas; a mancha grande do alto saiu a pedido), medidos em raios da íris vista neste quadro (acompanha zoom, altura em
+ * voxels e olho de lado). Ao girar a câmera o reflexo fica do mesmo lado do olho; olho de lado ou de costas (poucos pixels à
+ * vista) fica sem brilho.
+ * (A primeira tentativa acendia pela normal no referencial da tela, mas o olho daqui é quase plano: os voxels escolhidos caíam
+ * espalhados na borda de cima da íris, debaixo do traço e da sobrancelha.)
+ */
+// dx, dy: deslocamento em raios da íris na tela (−x esquerda, −y cima); r: raio do disco em raios da íris; min: pixels de íris
+// à vista para o olho ter brilho
+const BRILHO_OLHO = {
+  min: 6,
+  dentro: 0.75,   // pixels do pet a menos disso (em raios) do centro da íris na tela também recebem o brilho
+  // só o ponto pequeno, embaixo do lado oposto ao alto da íris (a mancha grande do alto saiu: "muito grande", 2026-11-21).
+  // dx, dy: centro em raios da íris na tela (−x esquerda, −y cima); rx, ry: semieixos em raios; min: semieixo mínimo em pixels
+  formas: [
+    { dx: 0.46, dy: 0.44, rx: 0.24, ry: 0.24, min: 0.5 },
+  ],
+};
+let _naIris = false;                                         // a última amostra de corNoPonto caiu na íris aberta
+let _fechadoMuda = false;                                    // ... e a cor dela muda com o olho fechado (_corFechado)
+const _corFechado = [0, 0, 0];
+/**
+ * As peças brancas da malha (dentes e garras): triângulos cujo texel no centro é claro e sem cor (BRANCO), juntados em peças
+ * pelos vértices soldados na posição de repouso. Devolve a peça de cada vértice (-1 = nenhuma) e, por peça, a caixa no repouso.
+ */
+function pecasBrancas(g, mapa, uv) {
+  const pos = g.attributes.position, idx = g.index, n = idx ? idx.count : pos.count;
+  const solda = new Int32Array(pos.count), chave = new Map();
+  for (let i = 0; i < pos.count; i++) {
+    const k = `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;
+    let r = chave.get(k); if (r === undefined) { r = i; chave.set(k, i); } solda[i] = r;
+  }
+  const pai = new Int32Array(pos.count).map((_, i) => i), marca = new Uint8Array(pos.count);
+  const raiz = (i) => { while (pai[i] !== i) { pai[i] = pai[pai[i]]; i = pai[i]; } return i; };
+  for (let t = 0; t < n; t += 3) {
+    const v = [0, 1, 2].map((j) => (idx ? idx.getX(t + j) : t + j));
+    const u = (uv.getX(v[0]) + uv.getX(v[1]) + uv.getX(v[2])) / 3, w = (uv.getY(v[0]) + uv.getY(v[1]) + uv.getY(v[2])) / 3;
+    const c = texel(mapa, u, w), soma = c[0] + c[1] + c[2], croma = Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
+    if (!(soma > BRANCO.luma * 3 && croma < BRANCO.croma)) continue;
+    for (const i of v) marca[solda[i]] = 1;
+    const r0 = raiz(solda[v[0]]); pai[raiz(solda[v[1]])] = r0; pai[raiz(solda[v[2]])] = r0;
+  }
+  const peca = new Int32Array(pos.count).fill(-1), ids = new Map(), caixas = [];
+  for (let i = 0; i < pos.count; i++) {
+    if (!marca[solda[i]]) continue;
+    const r = raiz(solda[i]); let id = ids.get(r);
+    if (id === undefined) { id = caixas.length; ids.set(r, id); caixas.push({ lo: [1e9, 1e9, 1e9], hi: [-1e9, -1e9, -1e9], nv: 0, u: 0, v: 0 }); }
+    peca[i] = id; const cx = caixas[id]; cx.nv++; cx.u += uv.getX(i); cx.v += uv.getY(i);
+    const p = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    for (let e = 0; e < 3; e++) { cx.lo[e] = Math.min(cx.lo[e], p[e]); cx.hi[e] = Math.max(cx.hi[e], p[e]); }
+  }
+  // dente = peça branca pequena (a maior medida abaixo de DENTE.tam da altura da malha); as garras são maiores e ficam como estão
+  let ylo = 1e9, yhi = -1e9; for (let i = 0; i < pos.count; i++) { ylo = Math.min(ylo, pos.getY(i)); yhi = Math.max(yhi, pos.getY(i)); }
+  const listas = caixas.map(() => []);
+  for (let i = 0; i < pos.count; i++) if (peca[i] >= 0) listas[peca[i]].push(i);
+  const dentes = listas.filter((_, id) => Math.max(...[0, 1, 2].map((e) => caixas[id].hi[e] - caixas[id].lo[e])) < DENTE.tam * (yhi - ylo));
+  return { listas: dentes.map((l) => Int32Array.from(l)), pecas: caixas.length };
+}
+/** a cor (sRGB 0..255) num ponto de um triângulo: bary (a, b) sobre os vértices i0, i1, i2 */
+function corNoPonto(vx, i0, i1, i2, a, b, out) {
+  const w0 = 1 - a - b;
+  _naIris = false; _fechadoMuda = false;
+  if (vx.tipo === "cor") { out[0] = vx.corBase[0]; out[1] = vx.corBase[1]; out[2] = vx.corBase[2]; return out; }
+  const uvAt = (attr) => [attr.getX(i0) * w0 + attr.getX(i1) * a + attr.getX(i2) * b, attr.getY(i0) * w0 + attr.getY(i1) * a + attr.getY(i2) * b];
+  if (vx.tipo === "mapa") {
+    const [u, v] = uvAt(vx.uv[0]), t = texel(vx.mapa, u, v);
+    for (let k = 0; k < 3; k++) out[k] = t[k] * vx.corBase[k] / 255;
+    return out;
+  }
+  // o rosto do DSTS: pele, íris por cima pelo alfa dela, e a folha das pálpebras por cima de tudo (linha 0: olho aberto)
+  const [u0, v0] = uvAt(vx.uv[0]), [u1, v1] = uvAt(vx.uv[1]), [u2, v2] = uvAt(vx.uv[2]);
+  const p = texel(vx.pele, u0, v0); const pr = p[0], pg = p[1], pb = p[2];
+  const ir = texel(vx.iris, u1, v1); const ia = ir[3] / 255;
+  let r = pr + (ir[0] - pr) * ia, gg = pg + (ir[1] - pg) * ia, bb = pb + (ir[2] - pb) * ia;
+  const pl =texel(vx.palp, u2, v2, 0 / LINHAS_OLHO); const la = pl[3] / 255;
+  r += (pl[0] - r) * la; gg += (pl[1] - gg) * la; bb += (pl[2] - bb) * la;
+  _naIris = ia > 0.5 && la < 0.5;
+  out[0] = r * vx.corBase[0] / 255; out[1] = gg * vx.corBase[1] / 255; out[2] = bb * vx.corBase[2] / 255;
+  // olho fechado: a linha 1 da folha, com a íris deslocada junto (vec2(0, linha/4), como o rosto() do pet3d.ts). Só onde a
+  // pálpebra fechada, a aberta ou a íris tocam: no resto do corpo a cor é a mesma e não se guarda nada
+  const plF = texel(vx.palp, u2, v2, 1 / LINHAS_OLHO), laF = plF[3] / 255;
+  _fechadoMuda = laF > 0 || la > 0 || ia > 0;
+  if (_fechadoMuda) {
+    const pfr = plF[0], pfg = plF[1], pfb = plF[2];
+    const irF = texel(vx.iris, u1, v1, 1 / LINHAS_OLHO), iaF = irF[3] / 255;
+    let fr = pr + (irF[0] - pr) * iaF, fg = pg + (irF[1] - pg) * iaF, fb = pb + (irF[2] - pb) * iaF;
+    fr += (pfr - fr) * laF; fg += (pfg - fg) * laF; fb += (pfb - fb) * laF;
+    _corFechado[0] = fr * vx.corBase[0] / 255; _corFechado[1] = fg * vx.corBase[1] / 255; _corFechado[2] = fb * vx.corBase[2] / 255;
+  }
+  return out;
+}
+
+/**
+ * A pose atual, em coordenadas do mundo: os triângulos (9 números), por triângulo a malha e os índices dos vértices, e as normais
+ * suaves dos 3 vértices (9 números) já nos eixos da grade.
+ * As normais: soma das normais das faces vizinhas (pesada pela área), com os vértices soldados pela posição (as costuras de UV não
+ * viram quina). No glTF a face da frente é anti-horária, então a soma aponta para fora; na grade só se permutam os componentes
+ * (X, Y, Z) -> (X, Z, Y). (Calcular o produto vetorial já nos eixos trocados inverte o sinal: a versão anterior acendia por dentro.)
+ */
+function triangles(root) {
+  root.updateMatrixWorld(true);
+  const tris = [], refs = [], vns = [];
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible || o.userData.vox?.pular) return;
+    const g = o.geometry, pos = g.attributes.position, idx = g.index;
+    const n = idx ? idx.count : pos.count;
+    const world = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {                     // pele aplicada (SkinnedMesh) e matriz do mundo
+      o.getVertexPosition(i, _v); _v.applyMatrix4(o.matrixWorld);
+      world[i * 3] = _v.x; world[i * 3 + 1] = _v.y; world[i * 3 + 2] = _v.z;
+    }
+    const vx = o.userData.vox || { tipo: "cor", corBase: [204, 204, 204] };
+    // os dentes crescem em volta do próprio centro já na pose (a base entra na gengiva, a ponta sai do lábio)
+    if (vx.dentes) for (const l of vx.dentes.listas) {
+      let cx = 0, cy = 0, cz = 0;
+      for (const i of l) { cx += world[i * 3]; cy += world[i * 3 + 1]; cz += world[i * 3 + 2]; }
+      cx /= l.length; cy /= l.length; cz /= l.length;
+      for (const i of l) {
+        world[i * 3] = cx + (world[i * 3] - cx) * DENTE.escala; world[i * 3 + 1] = cy + (world[i * 3 + 1] - cy) * DENTE.escala;
+        world[i * 3 + 2] = cz + (world[i * 3 + 2] - cz) * DENTE.escala;
+      }
+    }
+    // solda: cada vértice aponta para um representante na mesma posição (1e-4 do tamanho do arquivo)
+    const solda = new Int32Array(pos.count), mapa = new Map();
+    for (let i = 0; i < pos.count; i++) {
+      const key = `${Math.round(world[i * 3] * 1e4)},${Math.round(world[i * 3 + 1] * 1e4)},${Math.round(world[i * 3 + 2] * 1e4)}`;
+      let r = mapa.get(key); if (r === undefined) { r = i; mapa.set(key, i); } solda[i] = r;
+    }
+    const acc = new Float32Array(pos.count * 3);
+    const tri = (t) => [idx ? idx.getX(t) : t, idx ? idx.getX(t + 1) : t + 1, idx ? idx.getX(t + 2) : t + 2];
+    for (let t = 0; t < n; t += 3) {
+      const [i0, i1, i2] = tri(t);
+      const ax = world[i1 * 3] - world[i0 * 3], ay = world[i1 * 3 + 1] - world[i0 * 3 + 1], az = world[i1 * 3 + 2] - world[i0 * 3 + 2];
+      const bx = world[i2 * 3] - world[i0 * 3], by = world[i2 * 3 + 1] - world[i0 * 3 + 1], bz = world[i2 * 3 + 2] - world[i0 * 3 + 2];
+      const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;   // pesada pela área
+      for (const i of [i0, i1, i2]) { const r = solda[i]; acc[r * 3] += cx; acc[r * 3 + 1] += cy; acc[r * 3 + 2] += cz; }
+    }
+    for (let t = 0; t < n; t += 3) {
+      const [i0, i1, i2] = tri(t);
+      tris.push(world[i0 * 3], world[i0 * 3 + 1], world[i0 * 3 + 2], world[i1 * 3], world[i1 * 3 + 1], world[i1 * 3 + 2],
+                world[i2 * 3], world[i2 * 3 + 1], world[i2 * 3 + 2]);
+      refs.push(vx, i0, i1, i2);
+      for (const i of [i0, i1, i2]) {
+        const r = solda[i], X = acc[r * 3], Y = acc[r * 3 + 1], Z = acc[r * 3 + 2], L = Math.hypot(X, Y, Z) || 1;
+        vns.push(X / L, Z / L, Y / L);                         // (X, Y, Z) do glTF -> (x, y, z) da grade
+      }
+    }
+  });
+  return { tris, refs, vns };
+}
+
+function bboxOf(tris) {
+  const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], tris[i + k]); hi[k] = Math.max(hi[k], tris[i + k]); }
+  return { lo, hi };
+}
+
+/** Enquadramento fixo (escala e grade) para todas as poses de um modelo, a partir da caixa de uma pose de referência. */
+function framing(box, height, pad = 4, padTop = pad) {
+  const s = height / (box.hi[1] - box.lo[1]);
+  const w = (box.hi[0] - box.lo[0]) * s, d = (box.hi[2] - box.lo[2]) * s;
+  const nx = Math.ceil(w) + pad * 2, ny = Math.ceil(d) + pad * 2, nz = Math.ceil(height) + padTop + 2;
+  return { s, nx, ny, nz, mx: (box.lo[0] + box.hi[0]) / 2, mz: (box.lo[2] + box.hi[2]) / 2, y0: box.lo[1], zoff: 0 };
+}
+
+/**
+ * A grade de um clipe: a mesma escala, o mesmo centro e o mesmo chão da pose de referência (o personagem não pula de lugar nem de
+ * tamanho), mas grande o bastante para a caixa de todas as poses do clipe: um golpe que salta ou uma queda que afunda não é cortado.
+ * zoff = quantas fatias ficam abaixo do chão (sliceZ desconta).
+ */
+function framingClip(base, box) {
+  const { s, mx, mz, y0 } = base, m = 3;
+  const rx = Math.max(mx - box.lo[0], box.hi[0] - mx) * s, ry = Math.max(mz - box.lo[2], box.hi[2] - mz) * s;
+  const nx = Math.max(base.nx, 2 * Math.ceil(rx + m)), ny = Math.max(base.ny, 2 * Math.ceil(ry + m));
+  const zoff = Math.max(0, Math.ceil((y0 - box.lo[1]) * s) + 1);
+  const nz = Math.max(base.nz, zoff + Math.ceil((box.hi[1] - y0) * s) + m);
+  return { ...base, nx, ny, nz, zoff };
+}
+/** a caixa só dos vértices (sem normais), para medir as poses de um clipe */
+function bboxPose(root) {
+  root.updateMatrixWorld(true);
+  const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible || o.userData.vox?.pular) return;
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      o.getVertexPosition(i, _v); _v.applyMatrix4(o.matrixWorld);
+      lo[0] = Math.min(lo[0], _v.x); lo[1] = Math.min(lo[1], _v.y); lo[2] = Math.min(lo[2], _v.z);
+      hi[0] = Math.max(hi[0], _v.x); hi[1] = Math.max(hi[1], _v.y); hi[2] = Math.max(hi[2], _v.z);
+    }
+  });
+  return { lo, hi };
+}
+
+/**
+ * Rasteriza os triângulos na grade. Cada voxel da casca soma as cores e as normais de todas as amostras que caem nele
+ * (a média segura a textura melhor do que "a última amostra vence"). Devolve a grade crua, ainda sem material.
+ */
+const _cor = [0, 0, 0];
+const FORA = { n: 0, x0: 0, x1: -1, y0: 0, y1: -1, z0: 0, z1: -1 };   // amostras que caíram fora da grade (diagnóstico)
+function rasterize({ tris, refs, vns }, fr) {
+  const { s, nx, ny, nz, mx, mz, y0, zoff } = fr, N = nx * ny * nz;
+  const rgb = new Float32Array(N * 3), cnt = new Uint16Array(N), nrm = new Float32Array(N * 3), tinta = new Uint16Array(N), branco = new Uint16Array(N), olho = new Uint16Array(N);
+  const fechado = new Map();                                  // célula -> [Δr, Δg, Δb, Δtinta] somados (olho fechado - aberto)
+  const P = (i) => [(tris[i] - mx) * s + nx / 2, (tris[i + 2] - mz) * s + ny / 2, (tris[i + 1] - y0) * s + zoff];
+  for (let t = 0, ti = 0; t < tris.length; t += 9, ti += 4) {
+    const a = P(t), b = P(t + 3), c = P(t + 6);
+    _a.set(...a); _b.set(...b); _c.set(...c);
+    _n.subVectors(_b, _a).cross(_v.subVectors(_c, _a));
+    if (_n.lengthSq() < 1e-12) continue;
+    const q = (t / 9) * 9;                                    // as normais suaves dos 3 vértices deste triângulo
+    const vx = refs[ti], i0 = refs[ti + 1], i1 = refs[ti + 2], i2 = refs[ti + 3];
+    const L = Math.max(_a.distanceTo(_b), _a.distanceTo(_c), _b.distanceTo(_c));
+    const steps = Math.max(1, Math.ceil(L / 0.5));            // amostras a cada meio voxel: a textura não fura
+    for (let i = 0; i <= steps; i++) for (let j = 0; j <= steps - i; j++) {
+      const u = i / steps, w = j / steps;
+      const x = a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * w, y = a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * w,
+            z = a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * w;
+      const ix = x | 0, iy = y | 0, iz = z | 0;
+      if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) {
+        FORA.n++; FORA.x0 = Math.min(FORA.x0, ix); FORA.x1 = Math.max(FORA.x1, ix - nx); FORA.y0 = Math.min(FORA.y0, iy);
+        FORA.y1 = Math.max(FORA.y1, iy - ny); FORA.z0 = Math.min(FORA.z0, iz); FORA.z1 = Math.max(FORA.z1, iz - nz); continue;
+      }
+      const k = (iz * ny + iy) * nx + ix;
+      corNoPonto(vx, i0, i1, i2, u, w, _cor);
+      rgb[k * 3] += _cor[0]; rgb[k * 3 + 1] += _cor[1]; rgb[k * 3 + 2] += _cor[2];
+      if (cnt[k] < 65535) {
+        cnt[k]++;
+        const soma = _cor[0] + _cor[1] + _cor[2], croma = Math.max(_cor[0], _cor[1], _cor[2]) - Math.min(_cor[0], _cor[1], _cor[2]);
+        if (soma < TINTA.luma * 3 && croma < TINTA.croma) tinta[k]++;
+        else if (soma > BRANCO.luma * 3 && croma < BRANCO.croma) branco[k]++;
+        if (_naIris) olho[k]++;
+        if (_fechadoMuda) {                                     // olho fechado: só a diferença, num mapa esparso
+          let d = fechado.get(k); if (!d) { d = [0, 0, 0, 0]; fechado.set(k, d); }
+          d[0] += _corFechado[0] - _cor[0]; d[1] += _corFechado[1] - _cor[1]; d[2] += _corFechado[2] - _cor[2];
+          const sF = _corFechado[0] + _corFechado[1] + _corFechado[2];
+          const cF = Math.max(_corFechado[0], _corFechado[1], _corFechado[2]) - Math.min(_corFechado[0], _corFechado[1], _corFechado[2]);
+          d[3] += (sF < TINTA.luma * 3 && cF < TINTA.croma ? 1 : 0) - (soma < TINTA.luma * 3 && croma < TINTA.croma ? 1 : 0);
+        }
+      }
+      const w0 = 1 - u - w;
+      nrm[k * 3] += vns[q] * w0 + vns[q + 3] * u + vns[q + 6] * w;
+      nrm[k * 3 + 1] += vns[q + 1] * w0 + vns[q + 4] * u + vns[q + 7] * w;
+      nrm[k * 3 + 2] += vns[q + 2] * w0 + vns[q + 5] * u + vns[q + 8] * w;
+    }
+  }
+  for (let k = 0; k < N; k++) if (cnt[k]) { rgb[k * 3] /= cnt[k]; rgb[k * 3 + 1] /= cnt[k]; rgb[k * 3 + 2] /= cnt[k]; }
+  return { fr, rgb, cnt, nrm, tinta, branco, olho, fechado };
+}
+
+/**
+ * A paleta do personagem: corte pela mediana (median cut) das cores da casca na pose de referência. Como no moon-stack, cada
+ * pixel desenhado é um par (material, nível); aqui cada cor da paleta vira um material com a sua rampa. A mesma paleta vale
+ * para todos os quadros, então a cor de uma parte não pisca de uma pose para outra.
+ */
+function buildPalette(raster, nCores = 40) {
+  const cols = [];
+  for (let k = 0; k < raster.cnt.length; k++) if (raster.cnt[k]) cols.push([raster.rgb[k * 3], raster.rgb[k * 3 + 1], raster.rgb[k * 3 + 2]]);
+  if (!cols.length) throw new Error("a malha não gerou nenhum voxel");
+  let caixas = [cols];
+  while (caixas.length < nCores) {
+    let melhor = -1, eixo = 0, faixa = -1;
+    caixas.forEach((cx, i) => {
+      if (cx.length < 2) return;
+      for (let e = 0; e < 3; e++) {
+        let lo = 1e9, hi = -1e9; for (const c of cx) { lo = Math.min(lo, c[e]); hi = Math.max(hi, c[e]); }
+        const peso = (hi - lo) * Math.sqrt(cx.length);           // corta a caixa larga e povoada primeiro
+        if (peso > faixa) { faixa = peso; melhor = i; eixo = e; }
+      }
+    });
+    if (melhor < 0 || faixa <= 0) break;
+    const cx = caixas[melhor].sort((p, q) => p[eixo] - q[eixo]), meio = cx.length >> 1;
+    caixas.splice(melhor, 1, cx.slice(0, meio), cx.slice(meio));
+  }
+  let cores = caixas.map((cx) => [0, 1, 2].map((e) => cx.reduce((s, c) => s + c[e], 0) / cx.length));
+  // refino por k-means: os centros vão para onde as cores se juntam (o corpo vira um tom, não uma faixa de tons)
+  const dist = (c, p) => 2 * (c[0] - p[0]) ** 2 + 4 * (c[1] - p[1]) ** 2 + 3 * (c[2] - p[2]) ** 2;
+  for (let it = 0; it < 6; it++) {
+    const soma = cores.map(() => [0, 0, 0, 0]);
+    for (const c of cols) {
+      let bi = 0, bd = 1e18;
+      for (let i = 0; i < cores.length; i++) { const d = dist(c, cores[i]); if (d < bd) { bd = d; bi = i; } }
+      const s = soma[bi]; s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3]++;
+    }
+    cores = cores.map((c, i) => (soma[i][3] ? [soma[i][0] / soma[i][3], soma[i][1] / soma[i][3], soma[i][2] / soma[i][3]] : c));
+  }
+  // preto e branco reservados: a pupila e o brilho do olho são poucos voxels e a mediana os engole (a pupila caía no vermelho
+  // escuro de dentro da boca); dentes e garras também puxam para o branco
+  for (const fixa of CORES_FIXAS) if (!cores.some((c) => dist(c, fixa) < 900)) cores.push(fixa);
+  // cores raras e distintas: a amostra mais longe de todas as cores vira cor nova (a média do grupo que ela puxa), até
+  // CORES_RARAS.max vezes, enquanto a distância passar de CORES_RARAS.dist (o verde da íris tem poucos voxels e sumia)
+  for (let extra = 0; extra < CORES_RARAS.max; extra++) {
+    let pior = null, pd = -1;
+    for (const c of cols) { let bd = 1e18; for (const k of cores) bd = Math.min(bd, dist(c, k)); if (bd > pd) { pd = bd; pior = c; } }
+    if (pd < CORES_RARAS.dist) break;
+    const grupo = cols.filter((c) => dist(c, pior) < pd / 4);
+    cores.push([0, 1, 2].map((e) => grupo.reduce((s, c) => s + c[e], 0) / grupo.length));
+  }
+  const mats = cores.map(([r, g, b]) => rampFromRGB(r, g, b));
+  const cache = new Map();
+  const nearest = (r, g, b) => {
+    const key = ((r >> 2) << 12) | ((g >> 2) << 6) | (b >> 2);
+    let m = cache.get(key);
+    if (m !== undefined) return m;
+    let best = 1e18;
+    for (let i = 0; i < cores.length; i++) {
+      // distância com peso perceptivo simples (o verde pesa mais)
+      const dr = r - cores[i][0], dg = g - cores[i][1], db = b - cores[i][2], d = 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+      if (d < best) { best = d; m = mats[i]; }
+    }
+    cache.set(key, m); return m;
+  };
+  return { cores, mats, nearest };
+}
+
+/** Da grade crua ao modelo: material pela paleta, normais, o interior cheio por flood fill. */
+function finishVox(raster, palette, tweak = 0) {
+  const { fr, rgb, cnt, nrm, tinta, branco, olho, fechado } = raster, { nx, ny, nz } = fr, N = nx * ny * nz;
+  DENTES.amostrados = 0; DENTES.brancos = 0;
+  const v = new Vox(nx, ny, nz, nx / 2, ny / 2);
+  v.n = nrm;
+  if (olho) { v.o = new Uint8Array(N); v.matBrilho = palette.nearest(...CORES_FIXAS[1]); }
+  for (let k = 0; k < N; k++) {
+    if (!cnt[k]) continue;
+    // prioridade da tinta: as linhas pretas da textura (anel da pálpebra, pupila, boca) são finas e somem na média
+    if (branco && branco[k]) DENTES.amostrados++;
+    if (olho && olho[k] * 2 >= cnt[k]) v.o[k] = 1;            // voxel da íris aberta: o brilho pela câmera (shade)
+    v.m[k] = tinta && tinta[k] >= cnt[k] * TINTA.fracao ? palette.nearest(...CORES_FIXAS[0])
+      : branco && branco[k] >= cnt[k] * BRANCO.fracao ? (DENTES.brancos++, palette.nearest(...CORES_FIXAS[1]))
+      : palette.nearest(rgb[k * 3] | 0, rgb[k * 3 + 1] | 0, rgb[k * 3 + 2] | 0);
+    const L = Math.hypot(nrm[k * 3], nrm[k * 3 + 1], nrm[k * 3 + 2]);
+    if (L > 1e-6) { nrm[k * 3] /= L; nrm[k * 3 + 1] /= L; nrm[k * 3 + 2] /= L; }
+  }
+  // o material de olho fechado, só nas células em que ele difere (a piscada troca esses na hora de acender: shade)
+  if (fechado && fechado.size) {
+    v.alt = new Map();
+    for (const [k, d] of fechado) {
+      const c = cnt[k], r = rgb[k * 3] + d[0] / c, g = rgb[k * 3 + 1] + d[1] / c, b = rgb[k * 3 + 2] + d[2] / c;
+      const mF = tinta[k] + d[3] >= c * TINTA.fracao ? palette.nearest(...CORES_FIXAS[0])
+        : palette.nearest(Math.max(0, r) | 0, Math.max(0, g) | 0, Math.max(0, b) | 0);
+      if (mF !== v.m[k]) v.alt.set(k, mF);
+    }
+  }
+  // o que não se alcança de fora, andando pelo vazio, é interior: vira sólido com a cor do vizinho mais próximo
+  const out = new Uint8Array(N), stack = [];
+  const push = (k) => { if (!out[k] && !v.m[k]) { out[k] = 1; stack.push(k); } };
+  for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    if (x === 0 || y === 0 || z === 0 || x === nx - 1 || y === ny - 1 || z === nz - 1) push((z * ny + y) * nx + x);
+  }
+  while (stack.length) {
+    const k = stack.pop(), x = k % nx, y = ((k / nx) | 0) % ny, z = (k / (nx * ny)) | 0;
+    if (x > 0) push(k - 1); if (x < nx - 1) push(k + 1);
+    if (y > 0) push(k - nx); if (y < ny - 1) push(k + nx);
+    if (z > 0) push(k - nx * ny); if (z < nz - 1) push(k + nx * ny);
+  }
+  let pending = [];
+  for (let k = 0; k < N; k++) if (!out[k] && !v.m[k]) pending.push(k);
+  for (let pass = 0; pass < 40 && pending.length; pass++) {
+    const next = [], fill = [];
+    for (const k of pending) {
+      const nb = [k - 1, k + 1, k - nx, k + nx, k - nx * ny, k + nx * ny].find((q) => q >= 0 && q < N && v.m[q]);
+      if (nb !== undefined) fill.push([k, nb]); else next.push(k);
+    }
+    for (const [k, q] of fill) {                              // cor e normal da casca mais próxima
+      v.m[k] = v.m[q]; v.n[k * 3] = v.n[q * 3]; v.n[k * 3 + 1] = v.n[q * 3 + 1]; v.n[k * 3 + 2] = v.n[q * 3 + 2];
+      // o interior logo atrás do olho aparece nos degraus das fatias: pisca junto com a casca de que copiou a cor
+      if (v.alt && v.alt.has(q)) v.alt.set(k, v.alt.get(q));
+    }
+    pending = next;
+  }
+  if (tweak) for (let k = 0; k < N; k++) if (v.m[k]) v.t[k] = Math.round((hash3(k, 7, 3) * 2 - 1) * tweak);
+  const M = compile(v); M.zoff = fr.zoff || 0;
+  return M;
+}
+
+/** atalho para um modelo parado (sem paleta pronta: ela sai da própria pose) */
+function voxelizeTris(T, fr, tweak = 0) { const r = rasterize(T, fr); return finishVox(r, buildPalette(r, 24), tweak); }
+
+const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
+async function loadStatic(url, height, tweak = 0) {
+  const g = await loader.loadAsync(url);
+  await prepararMalhas(g);
+  const T = triangles(g.scene);
+  return voxelizeTris(T, framing(bboxOf(T.tris), height), tweak);
+}
+
+// ---------------------------------------------------------------- inserção genérica de personagem
+// Cada estado procura um clipe pelo nome. Os códigos do DSTS vêm da tabela de nomes do dsts-viewer (data/animation_names.json):
+// bn01 parado, br01 correr (o Agumon não tem o andar de campo fw01), fq01 "sim". Um .glb qualquer cai nos nomes em inglês.
+const CLIPES = {
+  walk:   { nomes: /_br01$|_fw01(_01)?$|walk|run|andar|correr/i },
+  idle:   { nomes: /_bn01$|_fn01$|idle|parado|stand|breath/i },
+  jump:   { nomes: /jump|pul/i, de: 0.25, ate: 0.75 },
+  acenar: { nomes: /_fq01$|yes|wave|acen|dance|cheer/i },
+};
+// os nomes na tela dos códigos de clipe do DSTS (dsts-viewer, data/animation_names.json); sem nome lá, fica o código
+const NOMES_DSTS = {
+  ba01: "Ataque 1 (garra)", ba02: "Ataque 2 (mordida de fogo)", bd01: "Dano", bd02: "Dano (cai)", bd03: "Dano (levanta)",
+  bf01: "Ação de campo", bg01: "Defesa", bg02: "Esquiva", bn01: "Parado", bn02: "Parado (pouca vida)", br01: "Correr",
+  bs01: "Especial 1 (Pepper Breath)", bs02: "Especial 2 (Pepper Breath)", bv01: "Vitória (batalha)", fe01: "Comer",
+  fe02: "Vitória (campo)", fe03: "Bocejo", fe04: "Luta (campo)", fq01: "Sim", fq02: "Não",
+};
+const codigoClipe = (nome) => (nome.match(/^(?:chr|npc)\d{3}a?_(.+)$/) || [])[1] || null;
+const nomeClipe = (nome) => { const c = codigoClipe(nome); return c ? `${NOMES_DSTS[c] || c} · ${c}` : nome || "pose de repouso"; };
+const TINTA = { luma: 45, croma: 28, fracao: 1 / 3 };  // amostra escura e sem cor (o verde da íris não conta) e a fração que pinta de preto
+const CORES_FIXAS = [[16, 14, 20], [250, 249, 244]];   // sempre na paleta do personagem: preto da pupila e branco
+// dentes e garras: na a01 são um cinza claro (~165,160,145) que o toon do jogo acende até o branco; amostra clara e sem cor
+const BRANCO = { luma: 110, croma: 40, fracao: 1 / 4 };
+const DENTES = { amostrados: 0, brancos: 0 };           // diagnóstico do último quadro convertido
+// os 12 dentes do Agumon têm ~0,75 × 2,3 × 1,6 voxel a 84 de altura e metade fica no lábio: a média com o laranja os apaga.
+// Como no pixel art, crescem (só eles: peça branca menor que tam da altura da malha; as garras medem ~5 voxels e não mudam)
+const DENTE = { tam: 0.04, escala: 2.0 };
+const CORES_RARAS = { max: 8, dist: 6000 };            // cores raras que entram na paleta (distância com o peso 2,4,3 de dist)
+const PALETA_CORES = 5;                     // cores da paleta do personagem (o DSTS pinta em poucas cores chapadas)
+const QUADROS_POR_S = 12;                    // quadros voxel por segundo de clipe (os clipes do DSTS são a 30)
+
+/**
+ * O deslocamento do corpo inteiro no chão (root motion) sai do clipe: a grade voxel tem um enquadramento fixo, e quem anda no mundo
+ * é a cena. Fica só o sobe-e-desce. Vale para a junta mais alta que tem trilha de posição (J_center no DSTS).
+ */
+function semDeslocamento(clip, scene) {
+  const trilhas = clip.tracks.filter((t) => t.name.endsWith(".position"));
+  if (!trilhas.length) return clip;
+  const prof = (nome) => { let o = scene.getObjectByName(nome), d = 0; while (o && o.parent) { o = o.parent; d++; } return o ? d : 1e9; };
+  const raiz = trilhas.map((t) => [t, prof(t.name.slice(0, -9))]).sort((p, q) => p[1] - q[1])[0][0];
+  const c = clip.clone(), t = c.tracks.find((x) => x.name === raiz.name), v = t.values;
+  const x0 = v[0], z0 = v[2];
+  for (let i = 0; i < v.length; i += 3) { v[i] = x0; v[i + 2] = z0; }
+  return c;
+}
+
+/**
+ * Converte um personagem em quadros voxel.
+ * fonte: URL (string) ou o conteúdo do arquivo (ArrayBuffer); altura: em voxels.
+ * Devolve { walk, idle, jumpFrames, yes, nome, clipes, buildClip } no formato que o resto da cena usa.
+ */
+async function loadCharacter(fonte, altura = 40, nome = "personagem", onStage = () => {}) {
+  const g = typeof fonte === "string" ? await loader.loadAsync(fonte) : await loader.parseAsync(fonte, "");
+  onStage(`${nome}: lendo as texturas...`);
+  await prepararMalhas(g);
+  const mixer = new THREE.AnimationMixer(g.scene);
+  const achar = (re) => g.animations.find((a) => re.test(a.name));
+  const limpos = new Map();
+  const clipeLimpo = (clip) => { if (!limpos.has(clip)) limpos.set(clip, semDeslocamento(clip, g.scene)); return limpos.get(clip); };
+  let action = null;
+  const pose = (clip, t) => {
+    if (action) action.stop();
+    if (!clip) { mixer.setTime(0); return; }
+    action = mixer.clipAction(clipeLimpo(clip)); action.reset().play(); mixer.setTime(t);
+  };
+  // a pose de referência (o enquadramento e a paleta saem dela): o primeiro quadro do parado
+  const base = achar(CLIPES.idle.nomes) || g.animations[0] || null;
+  pose(base, 0);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const T0 = triangles(g.scene);
+  const folga = Math.round(altura * 0.08);                  // folga mínima; cada clipe alarga a grade dele (framingClip)
+  const fr = framing(bboxOf(T0.tris), altura, folga, folga + 2);
+  const r0 = rasterize(T0, fr), palette = buildPalette(r0, PALETA_CORES);
+  const parado = finishVox(r0, palette);
+  const cache = new Map();
+  const quadrosDe = (clip, n, de = 0, ate = 1) => {
+    const key = `${clip.name}|${n}|${de}|${ate}`;
+    if (cache.has(key)) return cache.get(key);
+    const out = [], tempos = Array.from({ length: n }, (_, i) => clip.duration * (de + (ate - de) * (i / n)));
+    const caixa = { lo: [1e9, 1e9, 1e9], hi: [-1e9, -1e9, -1e9] };
+    for (const t of tempos) {                                  // a grade deste clipe cobre todas as poses dele
+      pose(clip, t); const b = bboxPose(g.scene);
+      for (let e = 0; e < 3; e++) { caixa.lo[e] = Math.min(caixa.lo[e], b.lo[e]); caixa.hi[e] = Math.max(caixa.hi[e], b.hi[e]); }
+    }
+    const frc = framingClip(fr, caixa);
+    for (const t of tempos) { pose(clip, t); out.push(finishVox(rasterize(triangles(g.scene), frc), palette)); }
+    cache.set(key, out);
+    return out;
+  };
+  const nQuadros = (clip) => Math.max(6, Math.min(30, Math.round(clip.duration * QUADROS_POR_S)));
+  const estados = {};
+  for (const [estado, c] of Object.entries(CLIPES)) {
+    const clip = achar(c.nomes);
+    if (!clip) { estados[estado] = null; continue; }
+    onStage(`${nome}: convertendo ${nomeClipe(clip.name)} em voxels...`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    estados[estado] = { clip, frames: quadrosDe(clip, nQuadros(clip), c.de ?? 0, c.ate ?? 1) };
+  }
+  const W = estados.walk, I = estados.idle, A = estados.acenar;
+  return {
+    nome,
+    walk: W ? W.frames : [parado], idle: I ? I.frames : [parado], jumpFrames: estados.jump?.frames || null, jump: parado,
+    yes: A ? A.frames : null, yesDur: A ? A.clip.duration : 1.2,
+    // o passo e o ritmo tocam o clipe na velocidade dele: no correr, um ciclo do clipe = a distância andada nesse tempo
+    passo: W ? (22 * W.clip.duration) / W.frames.length : 2.0,
+    ritmoParado: I ? I.frames.length / I.clip.duration : 5,
+    clipes: g.animations.map((a) => a.name),
+    usados: { andar: W?.clip.name, parado: I?.clip.name, pulo: estados.jump?.clip.name, acenar: A?.clip.name },
+    paleta: palette.cores.length,
+    buildClip: (name, count) => {
+      const clip = g.animations.find((a) => a.name === name); if (!clip) throw new Error("clipe não encontrado: " + name);
+      return { frames: quadrosDe(clip, count || nQuadros(clip)), dur: clip.duration };
+    },
+    achados: { andar: !!W, parado: !!I, pulo: !!estados.jump, acenar: !!A },
+  };
+}
+
+// compatibilidade com a carga dos objetos estáticos
+async function loadAnimated(url, height) { return loadCharacter(url, height); }
+
+/** Acende cada voxel com o sol já no referencial do modelo. */
+function shade(M, L, lift = 0, fechado = false) {
+  const { cells, mats, tw, gl, nrm, ao, col } = M;
+  for (let j = 0; j < cells.length; j++) {
+    const nd = nrm[j * 3] * L[0] + nrm[j * 3 + 1] * L[1] + nrm[j * 3 + 2] * L[2];
+    const mt = mats[j], nl = NLEV[mt];
+    let lev;
+    if (CEL[mt]) {
+      // cel como o toon do DSTS: aceso = a cor da textura (nível 5), sombra um degrau ou dois abaixo, brilho só de frente para o sol;
+      // o vinco fundo (oclusão alta) desce um degrau
+      lev = nd > -0.12 ? 5 : 4;                               // dois tons, como a rampa de toon do jogo (a sombra é um degrau abaixo)
+      if (nd > 0.85) lev = 6;                                 // um fio de brilho só bem de frente para o sol
+    } else {
+      const amb = 0.34 * (1.35 - 0.7 * ao[j]);               // vincos mais fechados ficam mais escuros
+      lev = gl[j] ? nl - 1 : Math.round((amb + 0.72 * Math.max(nd, 0)) * (nl - 1)) + tw[j];
+    }
+    lev += lift;
+    col[cells[j]] = mt * MAXL + (lev < 0 ? 0 : lev > nl - 1 ? nl - 1 : lev);
+  }
+  if (!fechado || !M.fechadoJ) return;
+  // a piscada: as células do rosto que mudam com o olho fechado acendem com o material alternativo (o rosto é cel)
+  const fj = M.fechadoJ, fm = M.fechadoM;
+  for (let t = 0; t < fj.length; t++) {
+    const j = fj[t], mt = fm[t], nl = NLEV[mt];
+    const nd = nrm[j * 3] * L[0] + nrm[j * 3 + 1] * L[1] + nrm[j * 3 + 2] * L[2];
+    let lev = nd > -0.12 ? 5 : 4; if (nd > 0.85) lev = 6;
+    lev += lift;
+    col[cells[j]] = mt * MAXL + (lev < 0 ? 0 : lev > nl - 1 ? nl - 1 : lev);
+  }
+}
+
+// ---------------------------------------------------------------- câmera e quadro
+const cam = { x: 0, y: 0, rot: 0.5, f: 0.62, lift: 14, W: 16, H: 16 };
+function toScreen(x, y, z = 0) {
+  const c = Math.cos(cam.rot), s = Math.sin(cam.rot), dx = x - cam.x, dy = y - cam.y;
+  return [c * dx - s * dy + cam.W / 2, cam.f * (s * dx + c * dy) + cam.H / 2 + cam.lift - z];
+}
+
+const F = {};
+function resizeFrame(W, H) {
+  Object.assign(F, { W, H, mat: new Uint8Array(W * H), lev: new Int8Array(W * H), dep: new Float32Array(W * H),
+    oid: new Uint8Array(W * H), olh: new Uint8Array(W * H), olhoP0: Infinity, olhoP1: -1, shad: new Uint8Array(W * H), dark: new Int8Array(W * H), img: new ImageData(W, H) });
+  F.px = new Uint32Array(F.img.data.buffer);
+}
+
+// percorre os pixels cobertos por uma fatia (rasterização inversa) e chama hit(p, célula)
+function eachSlice(M, k, ox, oy, a, hit) {
+  const e = k * 4, x0 = M.ext[e], x1 = M.ext[e + 1], y0 = M.ext[e + 2], y1 = M.ext[e + 3];
+  if (x0 >= x1) return;
+  const ca = Math.cos(a), sa = Math.sin(a), f = cam.f, W = F.W, H = F.H;
+  let X0 = 1e9, X1 = -1e9, Y0 = 1e9, Y1 = -1e9;
+  for (const lx of [x0 - M.cx, x1 - M.cx]) for (const ly of [y0 - M.cy, y1 - M.cy]) {
+    const sx = ox + ca * lx - sa * ly, sy = oy + f * (sa * lx + ca * ly);
+    X0 = Math.min(X0, sx); X1 = Math.max(X1, sx); Y0 = Math.min(Y0, sy); Y1 = Math.max(Y1, sy);
+  }
+  X0 = Math.max(Math.floor(X0) - 1, 0); X1 = Math.min(Math.ceil(X1) + 1, W);
+  Y0 = Math.max(Math.floor(Y0) - 1, 0); Y1 = Math.min(Math.ceil(Y1) + 1, H);
+  const nx = M.nx, base = k * M.ny;
+  for (let sy = Y0; sy < Y1; sy++) {
+    const ry = (sy + 0.5 - oy) / f, rx = X0 + 0.5 - ox;
+    let lx = ca * rx + sa * ry + M.cx, ly = -sa * rx + ca * ry + M.cy;
+    for (let sx = X0, p = sy * W + X0; sx < X1; sx++, p++, lx += ca, ly -= sa) {
+      if (lx < x0 || ly < y0 || lx >= x1 || ly >= y1) continue;
+      hit(p, (base + (ly | 0)) * nx + (lx | 0));
+    }
+  }
+}
+
+function sliceZ(inst, k, gap) { return inst.z + (k - (inst.model.zoff || 0)) * (1 + gap) + (inst.off ? inst.off[k] : 0); }
+
+function drawInst(inst, gap) {
+  const M = inst.model, col = M.col, { mat, lev, dep, oid, olh } = F, id = inst.oid, od = M.olhoDe;
+  const [ox, oy] = toScreen(inst.x, inst.y, 0), a = cam.rot + inst.yaw;
+  for (let k = 0; k < M.nz; k++) {
+    if (inst.vis && !inst.vis[k]) continue;
+    const zk = sliceZ(inst, k, gap), zz = zk + 0.5;
+    // o modelo com olho anota em F.olh qual olho cobre o pixel; os objetos da ilha seguem sem o teste por pixel
+    eachSlice(M, k, ox, oy - zk, a, od
+      ? (p, c) => {
+          const ci = col[c];
+          if (ci < 0 || zz <= dep[p]) return;
+          dep[p] = zz; mat[p] = (ci / MAXL) | 0; lev[p] = ci % MAXL; oid[p] = id;
+          const e = od[c]; olh[p] = e;
+          if (e) { if (p < F.olhoP0) F.olhoP0 = p; if (p > F.olhoP1) F.olhoP1 = p; }
+        }
+      : (p, c) => {
+          const ci = col[c];
+          if (ci < 0 || zz <= dep[p]) return;
+          dep[p] = zz; mat[p] = (ci / MAXL) | 0; lev[p] = ci % MAXL; oid[p] = id;
+        });
+  }
+}
+
+function shadowInst(inst, gap, L) {
+  const M = inst.model, col = M.col, shad = F.shad, kx = L[0] / L[2], ky = L[1] / L[2], a = cam.rot + inst.yaw;
+  for (let k = 0; k < M.nz; k++) {
+    if (inst.landed && !inst.landed[k]) continue;
+    const h = sliceZ(inst, k, gap) + 0.5;
+    const [gx, gy] = toScreen(inst.x - h * kx, inst.y - h * ky, 0);
+    eachSlice(M, k, gx, gy, a, (p, c) => { if (col[c] >= 0) shad[p] = 1; });
+  }
+}
+
+// o chão: cada pixel volta para um texel do mundo, então a textura gira junto com a câmera
+const ISLAND = 190;
+function groundTexel(ix, iy, t) {
+  const d = Math.hypot(ix, iy) + (hash3(ix >> 3, iy >> 3, 7) - 0.5) * 10;
+  if (d > ISLAND + 12) {
+    const w = hash3(ix >> 1, iy >> 1, (t * 2) | 0);
+    return [MAT.water, w < 0.06 ? 5 : w < 0.5 ? 3 : 2];
+  }
+  if (d > ISLAND) return [MAT.sand, 3 + (hash3(ix, iy, 3) < 0.4 ? 1 : 0)];
+  const ring = Math.abs(Math.hypot(ix - 20, iy + 10) - 70);
+  if (ring < 5 + (hash3(ix >> 2, iy >> 2, 9) - 0.5) * 3) return [MAT.dirt, 3 + (hash3(ix, iy, 5) < 0.3 ? 1 : 0) - (hash3(ix, iy, 6) < 0.15 ? 1 : 0)];
+  const big = hash3(ix >> 4, iy >> 4, 1), mid = hash3(ix >> 2, iy >> 2, 2), fine = hash3(ix, iy, 4);
+  if (fine < 0.006) return [MAT.pink, 3];
+  if (fine > 0.995) return [MAT.white, 3];
+  return [MAT.grass, 3 + (big < 0.35 ? -1 : 0) + (mid < 0.25 ? -1 : mid > 0.8 ? 1 : 0) + (fine < 0.12 ? 1 : 0)];
+}
+
+function drawGround(t, plain) {
+  const { W, H, mat, lev, dep, oid } = F, c = Math.cos(cam.rot), s = Math.sin(cam.rot);
+  for (let sy = 0, p = 0; sy < H; sy++) {
+    const ry = (sy + 0.5 - H / 2 - cam.lift) / cam.f, rx0 = 0.5 - W / 2;
+    let wx = c * rx0 + s * ry + cam.x, wy = -s * rx0 + c * ry + cam.y;
+    for (let sx = 0; sx < W; sx++, p++, wx += c, wy -= s) {
+      if (plain) { const g = estudioTexel(wx, wy); mat[p] = g; lev[p] = F.nivelEstudio; }
+      else { const g = groundTexel(Math.floor(wx), Math.floor(wy), t); mat[p] = g[0]; lev[p] = g[1]; }
+      dep[p] = 0; oid[p] = 0;
+    }
+  }
+}
+
+/**
+ * O fundo do estúdio (estudio.html): em volta do pet, um degradê radial em 5 níveis, uma grade de pontos a cada 12 unidades e um
+ * anel de pedestal. Devolve o material e deixa o nível em F.nivelEstudio (para não alocar um par por pixel).
+ */
+const ESTUDIO = { passo: 12, anel: [30, 31.6], degrau: 26 };
+function estudioTexel(wx, wy) {
+  const m = S.fundo === "noite" ? MAT.estudioNoite : MAT.estudioClaro, nl = NLEV[m];
+  const d = Math.hypot(wx - pet.x, wy - pet.y);
+  let l = nl - 1 - Math.min(nl - 1, Math.floor(d / ESTUDIO.degrau));
+  const gx = ((wx % ESTUDIO.passo) + ESTUDIO.passo) % ESTUDIO.passo, gy = ((wy % ESTUDIO.passo) + ESTUDIO.passo) % ESTUDIO.passo;
+  if (gx < 1 && gy < 1) l -= 1;                                     // os pontos da grade
+  if (d > ESTUDIO.anel[0] && d < ESTUDIO.anel[1]) l -= 1;           // o anel do pedestal
+  F.nivelEstudio = l < 0 ? 0 : l;
+  return m;
+}
+
+function applyShadow() {
+  const { shad, oid, lev, mat } = F;
+  for (let p = 0; p < shad.length; p++) {
+    if (shad[p] && !oid[p]) lev[p] = Math.max(lev[p] - (mat[p] === MAT.paper ? 2 : 2), 0);
+  }
+  shad.fill(0);
+}
+
+function point(x, y, z, m, l) {
+  const [sx, sy] = toScreen(x, y, z), ix = Math.floor(sx), iy = Math.floor(sy);
+  if (ix < 0 || iy < 0 || ix >= F.W || iy >= F.H) return;
+  const p = iy * F.W + ix, zz = z + 0.25;
+  if (zz <= F.dep[p]) return;
+  F.dep[p] = zz; F.mat[p] = m; F.lev[p] = l; F.oid[p] = 250;
+}
+
+// contorno: escurece o pixel de objeto que está na frente de algo bem mais longe (ou do chão)
+function outline() {
+  const { W, H, dep, oid, lev, dark } = F;
+  dark.fill(0);
+  const { mat } = F, tinta = MAT.dark, f = cam.f;
+  // sem closure por pixel (o laço roda em ~100 mil pixels por quadro): o limiar interno é lido uma vez por pixel
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x;
+    if (!oid[p] || oid[p] === 250) continue;
+    const cel = CEL[mat[p]], kp = (y + dep[p]) / f + dep[p], lim = cel ? CONTORNO_INTERNO : 6;
+    let d = 0;
+    for (let s = 0; s < 4; s++) {
+      let q, qy;
+      if (s === 0) { if (x === 0) continue; q = p - 1; qy = y; }
+      else if (s === 1) { if (x === W - 1) continue; q = p + 1; qy = y; }
+      else if (s === 2) { if (y === 0) continue; q = p - W; qy = y - 1; }
+      else { if (y === H - 1) continue; q = p + W; qy = y + 1; }
+      const dk = kp - ((qy + dep[q]) / f + dep[q]);
+      if (!oid[q]) {
+        if (dk > 1.5) { if (d < 3) d = 3; if (cel && CONTORNO_FORA) dark[q] = 4; }   // personagem: mais um pixel de traço para fora
+      }
+      else if (oid[q] !== 250 && dk > lim && d < 2) d = 2;
+    }
+    dark[p] = d;
+  }
+  for (let p = 0; p < lev.length; p++) {
+    if (!dark[p]) continue;
+    if (dark[p] === 4) { mat[p] = tinta; lev[p] = 1; continue; }          // o pixel de fora do traço (chão atrás do personagem)
+    // personagem com textura: a borda vira o traço escuro do contorno do jogo (a malha "outline" do DSTS, aqui em 2D)
+    if (CEL[mat[p]]) { mat[p] = tinta; lev[p] = 1; }
+    else lev[p] = Math.max(lev[p] - dark[p], 0);
+  }
+}
+
+/** o brilho dos olhos do pet, na tela (ver BRILHO_OLHO): só onde a íris do pet está à vista e o traço não passou */
+function brilhoDosOlhos(inst) {
+  const M = inst.model; if (!M.olhoDe) return;
+  const { W, H, mat, lev, oid, olh } = F, id = inst.oid;
+  const n = [0, 0, 0], sx = [0, 0, 0], sy = [0, 0, 0];
+  for (let p = F.olhoP0, p1 = F.olhoP1; p <= p1; p++) {
+    const o = olh[p]; if (!o || oid[p] !== id) continue;
+    n[o]++; sx[o] += p % W; sy[o] += (p / W) | 0;
+  }
+  const cor = M.matBrilho * MAXL + Math.min(5, NLEV[M.matBrilho] - 1);
+  BRILHO_OLHO.medido = [];                                    // diagnóstico: [pixels da íris, [pintados por forma]] por olho
+  for (let o = 1; o <= 2; o++) {
+    if (n[o] < BRILHO_OLHO.min) continue;
+    // o raio da íris na tela sai da área vista neste quadro: o brilho acompanha zoom, altura em voxels e o olho de lado
+    const r = Math.sqrt(n[o] / Math.PI), ox = sx[o] / n[o], oy = sy[o] / n[o], dentro2 = (BRILHO_OLHO.dentro * r) ** 2;
+    const pint = [];
+    for (const f of BRILHO_OLHO.formas) {
+      const cx = ox + f.dx * r, cy = oy + f.dy * r, rx = Math.max(f.min, f.rx * r), ry = Math.max(f.min, f.ry * r);
+      let feitos = 0;
+      for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const p = y * W + x;
+        if (oid[p] !== id) continue;
+        // pixel da íris, ou do pet bem dentro do disco da íris na tela (a pupila preta às vezes vem de um voxel sem a marca);
+        // o traço interno que caiu na íris é coberto
+        if (olh[p] !== o && (x + 0.5 - ox) ** 2 + (y + 0.5 - oy) ** 2 > dentro2) continue;
+        if (((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 > 1) continue;
+        mat[p] = (cor / MAXL) | 0; lev[p] = cor % MAXL; feitos++;
+      }
+      if (!feitos) {                                          // forma pequena demais para pegar um centro de pixel: o pixel do centro
+        const x = Math.floor(cx), y = Math.floor(cy), p = y * W + x;
+        if (x >= 0 && y >= 0 && x < W && y < H && oid[p] === id && (olh[p] === o || (x + 0.5 - ox) ** 2 + (y + 0.5 - oy) ** 2 <= dentro2)) { mat[p] = (cor / MAXL) | 0; lev[p] = cor % MAXL; feitos++; }
+      }
+      pint.push(feitos);
+    }
+    BRILHO_OLHO.medido.push([n[o], pint]);
+  }
+}
+
+function paint() {
+  const { mat, lev, px } = F;
+  for (let p = 0; p < px.length; p++) {
+    const m = mat[p], l = lev[p], nl = NLEV[m];
+    px[p] = LUT[m * MAXL + (l < 0 ? 0 : l >= nl ? nl - 1 : l)];
+  }
+  return F.img;
+}
+
+// ============================================================================================================
+// Modelos (originais desta POC)
+// ============================================================================================================
+
+/** O pet: um dinossaurinho original, menta com barriga creme, espinhos e crista coral. Frente para +y. */
+function petModel(mode, phase) {
+  const v = new Vox(40, 46, 48, 20, 24);
+  const TAU = Math.PI * 2, s = Math.sin(phase * TAU), c = Math.cos(phase * TAU);
+  const walk = mode === "walk";
+  const bz = walk ? Math.abs(s) * 1.0 : mode === "idle" ? phase * 0.9 : 0;    // no idle, phase = respiração 0..1
+  for (const side of [-1, 1]) {                                                 // pernas e pés
+    const sw = walk ? side * s : 0, lift = walk ? Math.max(0, side * c) * 1.8 : 0;
+    const fy = 1.2 + sw * 3.2, fz = 2.3 + lift;
+    const foot = ell(side * 5.2, fy + 1.2, fz, 3.6, 4.6, 2.4);
+    v.put(foot, "mint", { tw: -1 });
+    v.put(and(foot, (X, Y) => Y > fy + 3.4), "cream");
+    v.put(ell(side * 5, sw * 1.6, 6.8 + lift * 0.5 + bz * 0.5, 3.9, 3.9, 4.7), "mint", { tw: -1 });
+  }
+  const sway = walk ? -s * 2.2 : mode === "idle" ? Math.sin(phase * TAU) * 0.6 : 0;   // cauda
+  v.put(seg([0, -6, 9 + bz], [sway, -15.5, 6.5], 4.3, 2.3), "mint", { tw: -1 });
+  v.put(ell(sway * 1.3, -18, 7, 3.1, 3.1, 3.1), "coral");
+  const body = ell(0, 0, 14.5 + bz, 9, 8, 9);                                     // corpo e barriga
+  v.put(body, "mint", { noise: 0 });
+  v.put(and(body, (X, Y, Z) => Y > 3.4 && Math.abs(X) < 6.6 && Z < 21.5 + bz), "cream");
+  for (const [y, z, r] of [[-9.2, 19.5, 2.0], [-9.6, 15, 2.5], [-9.0, 10.6, 2.1]]) {  // espinhos nas costas
+    v.put(ell(0, y, z + bz, 1.4, r * 1.05, r), "coral", { over: false });
+  }
+  for (const side of [-1, 1]) {                                                 // braços
+    const as = walk ? -side * s * 2 : 0;
+    v.put(ell(side * 9, 3 + as, 15.5 + bz, 2.4, 3.3, 2.3), "mint", { tw: -1, over: false });
+    v.put(ell(side * 9.2, 5.8 + as, 15 + bz, 1.8, 1.6, 1.7), "cream", { over: false });
+  }
+  const hz = 29.5 + bz * 1.15;                                                  // cabeça
+  const head = ell(0, 1, hz, 10, 9, 8.5);
+  v.put(head, "mint");
+  const sn = ell(0, 7.6, hz - 3, 6.5, 4.8, 4.3);                                // focinho
+  v.put(sn, "mint");
+  v.put(and(sn, (X, Y, Z) => Z < hz - 3.2), "cream");
+  v.put(and(sn, (X, Y, Z) => Math.abs(Z - (hz - 3.2)) < 0.55 && Y > 9.2), "dark", { tw: 1 });
+  for (const side of [-1, 1]) {
+    v.put(ell(side * 1.9, 11.6, hz - 1.4, 0.7, 0.8, 0.7), "dark");             // narinas
+    v.put(ell(side * 4.3, 8.0, hz + 1.9, 2.3, 2.0, 2.5), "dark", { tw: 1 });  // olhos
+    v.put(ell(side * 3.7, 9.6, hz + 2.8, 0.75, 0.75, 0.8), "white", { glow: 1 });
+    v.put(and(head, ell(side * 7.8, 5.6, hz - 1.6, 1.8, 1.6, 1.3)), "pink");   // bochechas
+    v.put(seg([side * 3.2, -1.5, hz + 6], [side * 6.5, -5.8, hz + 12.5], 2.4, 0.8), "coral", { over: false }); // crista
+  }
+  return compile(v);
+}
+
+function treeModel(seed) {
+  const r = rng(seed), v = new Vox(38, 38, 56, 19, 19);
+  const lean = [(r() - 0.5) * 2, (r() - 0.5) * 2];
+  v.put(seg([0, 0, 0], [lean[0], lean[1], 26], 2.8, 1.8), "bark", { noise: 1, seed });
+  v.put(seg([lean[0] * 0.6, lean[1] * 0.6, 18], [6, 2, 27], 1.2, 0.8), "bark");
+  const blobs = [[0, 0, 32, 11, 11, 9], [5, 3, 38, 7, 7, 6], [-5, -2, 37, 7.5, 7, 6.5], [lean[0], lean[1], 44, 6, 6, 5]];
+  for (const [x, y, z, a, b, cz] of blobs) v.put(ell(x + lean[0], y + lean[1], z, a * (0.9 + r() * 0.2), b, cz), "leaf", { noise: 1, grain: 2, seed });
+  return compile(v);
+}
+
+function rockModel(seed, size) {
+  const r = rng(seed), n = Math.ceil(size * 2.6) + 4, v = new Vox(n, n, Math.ceil(size * 1.6) + 3, n / 2, n / 2);
+  v.put(ell(0, 0, size * 0.35, size * (1 + r() * 0.3), size * (0.8 + r() * 0.3), size * 0.85), "stone", { noise: 1, grain: 2, seed });
+  v.put(ell(size * 0.4, size * 0.2, size * 0.25, size * 0.6, size * 0.6, size * 0.6), "stone", { noise: 1, seed: seed + 1 });
+  return compile(v);
+}
+
+function mushroomModel(seed) {
+  const v = new Vox(16, 16, 16, 8, 8), r = rng(seed);
+  v.put(seg([0, 0, 0], [0.5, 0, 7], 1.8, 1.4), "cream");
+  const capf = and(ell(0.5, 0, 8, 6, 6, 4.5), (X, Y, Z) => Z > 7);
+  v.put(capf, "coral");
+  for (let i = 0; i < 6; i++) {
+    const a = r() * Math.PI * 2, d = 2 + r() * 3;
+    v.put(and(capf, ell(0.5 + Math.cos(a) * d, Math.sin(a) * d, 11.2 - d * 0.35, 1.2, 1.2, 1.2)), "white");
+  }
+  return compile(v);
+}
+
+function bushModel(seed) {
+  const r = rng(seed), v = new Vox(26, 26, 16, 13, 13);
+  for (let i = 0; i < 5; i++) v.put(ell((r() - 0.5) * 10, (r() - 0.5) * 10, 4 + r() * 4, 4.5 + r() * 2, 4.5 + r() * 2, 4 + r() * 2), "leaf", { noise: 1, grain: 2, seed: seed + i });
+  for (let i = 0; i < 4; i++) v.put(ell((r() - 0.5) * 12, (r() - 0.5) * 12, 6 + r() * 4, 0.9, 0.9, 0.9), "pink", { over: true, tw: 1 });
+  return compile(v);
+}
+
+// ============================================================================================================
+// A cena
+// ============================================================================================================
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d", { alpha: false });
+const $ = (id) => document.getElementById(id);
+const S = { pitch: 0.62, gap: 0, zoom: 4, outline: true, turn: false, onlyPet: true, fundo: "claro", tempo: 1 };
+const SUN = (() => { const a = 225 * Math.PI / 180, e = 50 * Math.PI / 180; return [Math.cos(e) * Math.cos(a), Math.cos(e) * Math.sin(a), Math.sin(e)]; })();
+
+$("info").textContent = "convertendo os modelos em voxels...";
+const t0 = performance.now();
+// o pet procedural (a versão 1) fica como reserva enquanto o Agumon é convertido
+const PET_V1 = { walk: [], idle: [], jump: null };
+for (let i = 0; i < 8; i++) PET_V1.walk.push(petModel("walk", i / 8));
+for (let i = 0; i < 4; i++) PET_V1.idle.push(petModel("idle", [0, 0.5, 1, 0.5][i]));
+PET_V1.jump = petModel("stand", 0);
+// O personagem padrão: o export do dsts-extractor do chr050 (C:\dsts_dados\agumon), servido por fetch.
+const PERSONAGEM_PADRAO = { url: "assets/agumon.glb", altura: 84, nome: "Agumon (DSTS chr050)" };
+PET_V1.nome = "Reserva procedural (menta)"; PET_V1.passo = 2.4; PET_V1.ritmoParado = 2.2;
+// A cena fica interativa enquanto o GLB é baixado e convertido. Se a conversão falhar,
+// o pet procedural continua disponível como reserva.
+let PET_MUSH = PET_V1, PET = PET_V1, PET_CARREGADO = null;
+// Cenário procedural da versão 1: o pacote enviado não inclui os GLBs do Nature Kit.
+const props = [];
+{
+  const r = rng(42);
+  const kinds = [[treeModel(1), 4], [treeModel(2), 4], [treeModel(3), 3], [rockModel(5, 5), 4], [rockModel(6, 3.5), 5], [rockModel(7, 7), 2],
+                 [mushroomModel(8), 6], [bushModel(9), 6], [bushModel(10), 5]];
+  let oid = 10;
+  for (const [model, n] of kinds) for (let i = 0; i < n; i++) {
+    for (let tries = 0; tries < 30; tries++) {
+      const a = r() * Math.PI * 2, d = 28 + Math.sqrt(r()) * (ISLAND - 40), x = Math.cos(a) * d, y = Math.sin(a) * d;
+      if (props.some((p) => Math.hypot(p.x - x, p.y - y) < p.model.radius * 0.55 + model.radius * 0.55)) continue;
+      props.push({ model, x, y, z: 0, yaw: r() * Math.PI * 2, oid: oid++ % 240 + 2, off: null, vis: null, landed: null });
+      break;
+    }
+  }
+}
+const buildMs = performance.now() - t0;
+
+const pet = { x: 0, y: 0, z: 0, vz: 0, h: Math.PI / 2, v: 0, dist: 0, idleT: 0, target: null, wait: 1.5, manualUntil: -1, yesUntil: -1 };
+const keys = new Set();
+let clock = 0, last = performance.now(), dragging = false, particles = [], stackStart = 0.2;
+let ataqueAtivo = null;
+
+function layout() {
+  const px = S.zoom, W = Math.max(16, Math.ceil(innerWidth / px)), H = Math.max(16, Math.ceil(innerHeight / px));
+  if (W !== F.W || H !== F.H) { resizeFrame(W, H); canvas.width = W; canvas.height = H; }
+  cam.W = W; cam.H = H;
+  canvas.style.width = W * px + "px"; canvas.style.height = H * px + "px";
+}
+addEventListener("resize", layout);
+
+// empilhamento: as fatias caem uma por uma, de baixo para cima
+function stackAnim(inst, t, delay, dur) {
+  const nz = inst.model.nz, fall = 0.22, height = 60;
+  if (t > stackStart + delay + dur + fall + 0.05) { inst.off = null; inst.vis = null; inst.landed = null; return; }
+  const off = inst.off && inst.off.length === nz ? inst.off : new Float32Array(nz);
+  const vis = inst.vis && inst.vis.length === nz ? inst.vis : new Uint8Array(nz);
+  const landed = inst.landed && inst.landed.length === nz ? inst.landed : new Uint8Array(nz);
+  for (let k = 0; k < nz; k++) {
+    const tl = stackStart + delay + (dur * k) / (nz - 1);
+    const u = (tl - t) / fall;
+    off[k] = u > 0 ? height * Math.min(u, 1) ** 2 : 0;
+    vis[k] = t >= tl - fall ? 1 : 0;
+    landed[k] = t >= tl ? 1 : 0;
+  }
+  inst.off = off; inst.vis = vis; inst.landed = landed;
+}
+
+const angleTo = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+function updatePet(dt) {
+  const c = Math.cos(cam.rot), s = Math.sin(cam.rot);
+  const up = keys.has("KeyW") || keys.has("ArrowUp"), dn = keys.has("KeyS") || keys.has("ArrowDown");
+  const lf = keys.has("KeyA") || keys.has("ArrowLeft"), rt = keys.has("KeyD") || keys.has("ArrowRight");
+  let mx = 0, my = 0;
+  if (up || dn || lf || rt) {
+    pet.manualUntil = clock + 4;
+    const fwd = (up ? 1 : 0) - (dn ? 1 : 0), side = (rt ? 1 : 0) - (lf ? 1 : 0);
+    mx = -s * fwd + c * side; my = -c * fwd - s * side;       // frente = para cima na tela
+  } else if (clock > pet.manualUntil && !S.onlyPet) {          // passeio sozinho (só na ilha; no estúdio o pet fica no pedestal)
+    if (!pet.target) {
+      pet.wait -= dt;
+      if (pet.wait <= 0) { const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 110; pet.target = [Math.cos(a) * d, Math.sin(a) * d]; }
+    } else {
+      const dx = pet.target[0] - pet.x, dy = pet.target[1] - pet.y;
+      if (Math.hypot(dx, dy) < 4) { pet.target = null; pet.wait = 1 + Math.random() * 2.5; }
+      else { mx = dx; my = dy; }
+    }
+  }
+  const want = Math.hypot(mx, my) > 0 ? 22 : 0;
+  pet.v += (want - pet.v) * (1 - Math.exp(-6 * dt));
+  if (want) {
+    const hd = Math.atan2(my, mx);
+    pet.h += angleTo(hd - pet.h) * (1 - Math.exp(-8 * dt));
+  }
+  let nx = pet.x + Math.cos(pet.h) * pet.v * dt, ny = pet.y + Math.sin(pet.h) * pet.v * dt;
+  for (const p of props) {                                      // não atravessa os objetos
+    const r = p.model.radius * 0.45 + 5, dx = nx - p.x, dy = ny - p.y, d = Math.hypot(dx, dy);
+    if (d < r && d > 1e-3) { nx = p.x + dx / d * r; ny = p.y + dy / d * r; if (pet.target) { pet.target = null; pet.wait = 0.3; } }
+  }
+  const dc = Math.hypot(nx, ny);
+  if (dc > ISLAND - 14) { nx *= (ISLAND - 14) / dc; ny *= (ISLAND - 14) / dc; pet.target = null; }
+  const step = Math.hypot(nx - pet.x, ny - pet.y);
+  pet.dist += step; pet.x = nx; pet.y = ny;
+  // pulo
+  if (pet.z > 0 || pet.vz > 0) { pet.vz -= 140 * dt; pet.z = Math.max(0, pet.z + pet.vz * dt); if (pet.z === 0) { pet.vz = 0; puff(pet.x, pet.y, 18); } }
+  // poeira dos passos
+  if (pet.v > 6 && pet.z === 0) {
+    const fi = Math.floor(pet.dist / 2.4) % 8;
+    if (fi !== pet.lastStep && (fi === 1 || fi === 5)) { puff(pet.x - Math.cos(pet.h) * 2, pet.y - Math.sin(pet.h) * 2, 4); }
+    pet.lastStep = fi;
+  }
+}
+
+function puff(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 6 + Math.random() * 18;
+    particles.push({ x: x + Math.cos(a) * 3, y: y + Math.sin(a) * 3, z: 0.5, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: 6 + Math.random() * 10, t: 0, life: 0.5 + Math.random() * 0.5 });
+  }
+}
+function updateParticles(dt) {
+  for (const p of particles) { p.t += dt; const d = Math.exp(-3 * dt); p.vx *= d; p.vy *= d; p.vz -= 30 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; }
+  particles = particles.filter((p) => p.z > 0 && p.t < p.life);
+}
+
+function petInst() {
+  let model;
+  if (pet.z > 0) {
+    if (PET.jumpFrames) { const u = Math.max(0, Math.min(0.999, 0.5 - pet.vz / 96)); model = PET.jumpFrames[Math.floor(u * PET.jumpFrames.length)]; }
+    else model = PET.jump;
+  } else if (ataqueAtivo && (ataqueAtivo.repetir ? pet.v <= 3 : clock < ataqueAtivo.inicio + ataqueAtivo.dur)) {
+    let u = (clock - ataqueAtivo.inicio) / ataqueAtivo.dur;
+    u = ataqueAtivo.repetir ? u - Math.floor(u) : Math.max(0, Math.min(0.999, u));
+    model = ataqueAtivo.frames[Math.floor(u * ataqueAtivo.frames.length)];
+  } else if (PET.yes && clock < pet.yesUntil) {
+    const u = Math.max(0, Math.min(0.999, 1 - (pet.yesUntil - clock) / PET.yesDur));
+    model = PET.yes[Math.floor(u * PET.yes.length)];
+  }
+  else if (pet.v > 3) model = PET.walk[Math.floor(pet.dist / PET.passo) % PET.walk.length];
+  else model = PET.idle[Math.floor(clock * PET.ritmoParado) % PET.idle.length];
+  return { model, x: pet.x, y: pet.y, z: pet.z, yaw: pet.h - Math.PI / 2, oid: 1, off: null, vis: null, landed: null };
+}
+
+const shaded = new Map();     // cada modelo é aceso uma vez por quadro e por orientação
+function prepare(inst, fechado = false) {
+  const M = inst.model, cy = Math.cos(-inst.yaw), sy = Math.sin(-inst.yaw);
+  shade(M, [cy * SUN[0] - sy * SUN[1], sy * SUN[0] + cy * SUN[1], SUN[2]], 0, fechado);
+}
+
+/**
+ * O piscar, como o pet3d.ts do mapa AC: a pálpebra fecha por PISCAR.fechado s ao fim de cada intervalo de PISCAR.entre (em
+ * ciclo; o 1,0 é a piscada dupla). PISCAR.forcar (true/false) prende o olho, para capturas; null segue o relógio.
+ */
+const PISCAR = { entre: [3.1, 4.4, 2.3, 5.2, 1.0, 3.7], fechado: 0.12, forcar: null };
+const PISCAR_CICLO = PISCAR.entre.reduce((s, x) => s + x + PISCAR.fechado, 0);
+function olhoFechado(t) {
+  if (PISCAR.forcar !== null) return PISCAR.forcar;
+  let r = t % PISCAR_CICLO;
+  for (const e of PISCAR.entre) { if (r < e) return false; r -= e; if (r < PISCAR.fechado) return true; r -= PISCAR.fechado; }
+  return false;
+}
+
+let fpsAcc = 0, fpsN = 0, fpsShown = 0;
+function render() {
+  const t = clock;
+  cam.f = S.pitch;
+  const pi = petInst();
+  const k = 1 - Math.exp(-4 * CAM.dt);                        // seguimento pelo tempo do quadro (não treme com fps variável)
+  cam.x += (pet.x - cam.x) * k; cam.y += (pet.y - cam.y) * k;
+  cam.lift = S.onlyPet ? 20 : 14;
+  drawGround(t, S.onlyPet);
+  if (F.olhoP1 >= 0) F.olh.fill(0, F.olhoP0, F.olhoP1 + 1);   // só a faixa onde o olho foi desenhado no quadro anterior
+  F.olhoP0 = Infinity; F.olhoP1 = -1;
+  const R = Math.hypot(cam.W, cam.H / cam.f) / 2 + 30;
+  const insts = S.onlyPet ? [pi] : [pi, ...props.filter((p) => Math.hypot(p.x - cam.x, p.y - cam.y) < R + p.model.radius)];
+  for (const it of insts) {
+    const d = it === pi ? 0 : 0.15 + Math.hypot(it.x - pet.x, it.y - pet.y) * 0.004;
+    stackAnim(it, t, d, it === pi ? 0.9 : 0.5);
+  }
+  // os objetos compartilham o modelo: acende e desenha cada um em sequência (sombra antes, para todos)
+  for (const it of insts) { prepare(it); shadowInst(it, S.gap, SUN); }
+  applyShadow();
+  const fechado = olhoFechado(t);
+  for (const it of insts) { prepare(it, it === pi && fechado); drawInst(it, S.gap); }
+  for (const p of particles) point(p.x, p.y, p.z, MAT.cream, 4 + (p.t < 0.2 ? 1 : 0));
+  if (S.outline) outline();
+  if (!fechado) brilhoDosOlhos(pi);                         // na piscada o brilho some (no jogo o b01m fechado é zero)
+  ctx.putImageData(paint(), 0, 0);
+}
+
+function step(now) {
+  requestAnimationFrame(step);
+  const dtReal = Math.min(Math.max((now - last) / 1000, 0), 0.05), dt = dtReal * S.tempo;   // S.tempo: câmera lenta / congelar
+  last = now; clock += dt;
+  atualizarCamera(dtReal);                                    // a câmera anda no tempo real, mesmo com o mundo congelado
+  updatePet(dt); updateParticles(dt);
+  const r0 = performance.now(); render(); const ms = performance.now() - r0;
+  fpsAcc += ms; fpsN++;
+  if (now - fpsShown > 500) {
+    $("info").textContent = `${F.W}×${F.H} px de arte · ${(fpsAcc / fpsN).toFixed(1)} ms por quadro · modelos em ${buildMs.toFixed(0)} ms`;
+    fpsAcc = 0; fpsN = 0; fpsShown = now;
+  }
+}
+
+/**
+ * A câmera. O giro tem um alvo (CAM.alvo): o arrasto, Q/R e o giro sozinho mexem no alvo e a câmera chega nele suave
+ * (CAM.seguir por segundo); ao soltar o arrasto, a velocidade dos últimos movimentos continua e cai (inércia: CAM.atrito,
+ * limitada a CAM.velMax rad/s; ~1/8 s do movimento).
+ * O arrasto horizontal gira (CAM.giroPorTela radianos por largura de tela), o vertical inclina (S.pitch, na faixa do slider:
+ * a altura da tela vale a faixa inteira; arrastar para baixo vê mais de cima). Roda: ver RODA. Pinça de dois dedos: zoom
+ * (S.zoom inteiro, 2–9). Q/R: 45°.
+ * "Câmera gira sozinha" vem desligado; ligado, para com o arrasto e só volta CAM.esperaGiro s depois do último toque.
+ * Quem muda cam.rot de fora (as capturas da validação) leva o alvo junto.
+ */
+const CAM = { alvo: cam.rot, vel: 0, aplicado: cam.rot, dt: 1 / 60, ultimoToque: -1e9, giroPorTela: Math.PI * 1.5, seguir: 16,
+              atrito: 8, velMax: 6, esperaGiro: 6, passoQR: Math.PI / 4, pinca: null };
+const PITCH_MIN = +$("pitch").min, PITCH_MAX = +$("pitch").max, ZOOM_MIN = +$("zoom").min, ZOOM_MAX = +$("zoom").max;
+const ponteiros = new Map();                                   // pointerId -> {x, y}
+let arrasto = null;                                            // {x, y, t} do último movimento de um dedo/mouse
+function atualizarCamera(dt) {
+  CAM.dt = dt || 1 / 60;
+  if (Math.abs(cam.rot - CAM.aplicado) > 1e-9) { CAM.alvo = cam.rot; CAM.vel = 0; }   // mudado de fora
+  if (!dragging) {
+    if (Math.abs(CAM.vel) > 1e-4) { CAM.alvo += CAM.vel * dt; CAM.vel *= Math.exp(-CAM.atrito * dt); } else CAM.vel = 0;
+    if (S.turn && clock - CAM.ultimoToque > CAM.esperaGiro && clock > pet.manualUntil) CAM.alvo += 0.12 * dt;
+  }
+  cam.rot += (CAM.alvo - cam.rot) * (1 - Math.exp(-CAM.seguir * dt));
+  CAM.aplicado = cam.rot;
+}
+function mudarZoom(d) {
+  const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, S.zoom + d));
+  if (z === S.zoom) return;
+  S.zoom = z; $("zoom").value = z; layout();
+}
+function mudarInclinacao(p) { S.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, p)); $("pitch").value = S.pitch.toFixed(2); }
+canvas.addEventListener("pointerdown", (e) => {
+  ponteiros.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* ponteiro sintético (testes) */ }
+  CAM.ultimoToque = clock;
+  if (ponteiros.size === 1) { dragging = true; CAM.vel = 0; arrasto = { x: e.clientX, y: e.clientY, t: performance.now() }; canvas.style.cursor = "grabbing"; }
+  else if (ponteiros.size === 2) {                              // dois dedos: pinça (o giro para)
+    dragging = false; arrasto = null;
+    const [a, b] = [...ponteiros.values()]; CAM.pinca = Math.hypot(a.x - b.x, a.y - b.y);
+  }
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!ponteiros.has(e.pointerId)) return;
+  ponteiros.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  CAM.ultimoToque = clock;
+  if (ponteiros.size === 2 && CAM.pinca) {
+    const [a, b] = [...ponteiros.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (d > CAM.pinca * 1.25) { mudarZoom(1); CAM.pinca = d; } else if (d < CAM.pinca / 1.25) { mudarZoom(-1); CAM.pinca = d; }
+    return;
+  }
+  if (!dragging || !arrasto) return;
+  const agora = performance.now(), dx = e.clientX - arrasto.x, dy = e.clientY - arrasto.y;
+  const dr = dx * CAM.giroPorTela / innerWidth;
+  CAM.alvo += dr;
+  const dts = Math.max(1, agora - arrasto.t) / 1000;            // velocidade do giro, suavizada (vira a inércia ao soltar)
+  CAM.vel = Math.max(-CAM.velMax, Math.min(CAM.velMax, CAM.vel * 0.6 + (dr / dts) * 0.4));
+  mudarInclinacao(S.pitch + dy * (PITCH_MAX - PITCH_MIN) / innerHeight);   // arrastar para baixo = ver mais de cima (como a órbita)
+  arrasto = { x: e.clientX, y: e.clientY, t: agora };
+});
+const endDrag = (e) => {
+  ponteiros.delete(e.pointerId);
+  if (arrasto && performance.now() - arrasto.t > 80) CAM.vel = 0;  // parou antes de soltar: sem inércia
+  if (ponteiros.size === 0) { dragging = false; arrasto = null; CAM.pinca = null; canvas.style.cursor = "grab"; }
+  else if (ponteiros.size === 1) { CAM.pinca = null; }
+  CAM.ultimoToque = clock;
+};
+canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
+/**
+ * A roda. Na janela inteira e não passiva, para o ctrl+roda (e a pinça do touchpad, que chega como ctrl+roda) não dar zoom na
+ * página. Sobre o painel a roda segue normal (rolar o painel), menos o ctrl+roda.
+ *  - roda (ou ctrl+roda): zoom, um nível por clique; o touchpad soma deltas pequenos até RODA.passo, e nunca mais de um nível
+ *    por evento (um clique de mouse com delta grande não pula dois níveis);
+ *  - shift+roda, ou a roda horizontal do touchpad: gira a câmera (RODA.giro radianos por RODA.passo de delta, pelo alvo suave);
+ *  - alt+roda: inclinação (RODA.inclina por RODA.passo, na faixa do slider).
+ */
+const RODA = { passo: 50, giro: Math.PI / 12, inclina: 0.04, acumZoom: 0, ultimoZoom: 0 };
+addEventListener("wheel", (e) => {
+  const noPainel = $("ui").contains(e.target);
+  if (noPainel && !e.ctrlKey) return;
+  e.preventDefault(); CAM.ultimoToque = clock;
+  const px = (d) => (e.deltaMode === 1 ? d * 33 : e.deltaMode === 2 ? d * innerHeight : d);   // linhas/páginas -> pixels
+  let dx = px(e.deltaX), dy = px(e.deltaY);
+  if (e.shiftKey && !dx) { dx = dy; dy = 0; }                    // shift+roda: alguns navegadores já trocam para deltaX
+  if (e.altKey) { mudarInclinacao(S.pitch + (dy || dx) / RODA.passo * RODA.inclina); return; }   // rodar para baixo = mais de cima
+  if (Math.abs(dx) > Math.abs(dy)) { CAM.alvo += dx / RODA.passo * RODA.giro; CAM.vel = 0; return; }
+  // zoom: soma até um passo; um nível por evento, e o que sobra do clique não vira um segundo nível
+  if (Math.sign(dy) !== Math.sign(RODA.acumZoom)) RODA.acumZoom = 0;
+  RODA.acumZoom += dy;
+  if (Math.abs(RODA.acumZoom) >= RODA.passo) { mudarZoom(RODA.acumZoom < 0 ? 1 : -1); RODA.acumZoom = 0; }   // para cima aproxima
+}, { passive: false });
+addEventListener("keydown", (e) => {                            // Q/R: 45° (a partir do passo de 45° mais perto do alvo)
+  if (e.code !== "KeyQ" && e.code !== "KeyR") return;
+  const p = CAM.passoQR, base = Math.round(CAM.alvo / p) * p;
+  CAM.alvo = base + (e.code === "KeyR" ? p : -p); CAM.vel = 0; CAM.ultimoToque = clock;
+});
+addEventListener("keydown", (e) => {
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+  if (e.code === "Space" && pet.z === 0) { pet.vz = 48; pet.manualUntil = clock + 4; }
+  keys.add(e.code);
+});
+addEventListener("keyup", (e) => keys.delete(e.code));
+addEventListener("blur", () => keys.clear());
+$("pitch").oninput = (e) => { S.pitch = +e.target.value; CAM.ultimoToque = clock; };
+$("gap").oninput = (e) => { S.gap = +e.target.value; };
+$("zoom").oninput = (e) => { S.zoom = +e.target.value; layout(); CAM.ultimoToque = clock; };
+$("outline").onchange = (e) => { S.outline = e.target.checked; };
+$("turn").onchange = (e) => { S.turn = e.target.checked; };
+$("stack").onclick = () => { stackStart = clock + 0.05; };
+function mostrarPet() {
+  $("petBtn").textContent = "Pet: " + PET.nome.split(" (")[0];
+  const nomes = PET.clipes || [];
+  if (PET.usados) {
+    const u = PET.usados, q = (c) => (c ? nomeClipe(c) : "—");
+    $("petInfo").textContent = `${PET.nome} · ${nomes.length} animações · paleta de ${PET.paleta} cores · parado: ${q(u.parado)} · correr: ${q(u.andar)} · E: ${q(u.acenar)}`;
+  } else $("petInfo").textContent = PET.nome;
+  const sel = $("clipSel"); sel.replaceChildren();
+  for (const n of nomes) sel.add(new Option(nomeClipe(n), n));
+  if (!nomes.length) sel.add(new Option("sem animações", ""));
+  $("playClip").disabled = !PET.buildClip || !nomes.length;
+}
+$("petBtn").onclick = () => {
+  const lista = [...new Set([PET_V1, PET_MUSH, PET_CARREGADO].filter(Boolean))];
+  PET = lista[(lista.indexOf(PET) + 1) % lista.length]; ataqueAtivo = null; mostrarPet(); stackStart = clock + 0.05;
+};
+/** converte um clipe em quadros voxel (uma vez; depois sai do cache) e toca por cima dos estados */
+function tocarClipe(nome, repetir) {
+  if (!nome || !PET.buildClip) return;
+  $("playClip").disabled = true;
+  $("petInfo").textContent = `convertendo ${nomeClipe(nome)} em quadros voxel...`;
+  setTimeout(() => {
+    try {
+      const t = performance.now(), { frames, dur } = PET.buildClip(nome);
+      ataqueAtivo = { frames, inicio: clock, dur, repetir };
+      pet.manualUntil = clock + dur + 1;
+      $("petInfo").textContent = `${PET.nome} · ${nomeClipe(nome)} · ${frames.length} quadros voxel em ${dur.toFixed(2)} s · ${(performance.now() - t).toFixed(0)} ms`;
+    } catch (err) { console.error(err); $("petInfo").textContent = `falha ao converter ${nome}: ${err.message}`; }
+    finally { $("playClip").disabled = !PET.buildClip; }
+  }, 20);
+}
+$("playClip").onclick = () => tocarClipe($("clipSel").value, $("loopClip").checked);
+// atalhos 1–9: golpes e gestos do DSTS, pelo código do clipe
+const ATALHOS = ["ba01", "ba02", "bs01", "bs02", "bg02", "bd01", "bv01", "fe01", "fq02"];
+addEventListener("keydown", (e) => {
+  const d = /^Digit([1-9])$/.exec(e.code); if (!d || !PET.clipes) return;
+  const nome = PET.clipes.find((n) => codigoClipe(n) === ATALHOS[+d[1] - 1]);
+  if (nome) { $("clipSel").value = nome; tocarClipe(nome, false); }
+});
+async function carregarArquivo(file) {
+  if (!file || !/\.(glb|gltf)$/i.test(file.name)) { $("petInfo").textContent = "use um arquivo .glb ou .gltf (um só arquivo)"; return; }
+  $("petInfo").textContent = `convertendo ${file.name} em voxels...`;
+  try {
+    const t = performance.now();
+    PET_CARREGADO = await loadCharacter(await file.arrayBuffer(), +$("altura").value, file.name);
+    PET = PET_CARREGADO; ataqueAtivo = null; mostrarPet(); stackStart = clock + 0.05;
+    $("petInfo").textContent += ` · ${(performance.now() - t).toFixed(0)} ms`;
+  } catch (err) { console.error(err); $("petInfo").textContent = "não deu para ler esse arquivo: " + err.message; }
+}
+$("altura").onchange = async (e) => {
+  const h = +e.target.value; if (!(h >= 24 && h <= 120)) return;
+  $("petInfo").textContent = `reconvertendo o Agumon com ${h} voxels de altura...`;
+  try {
+    const novo = await loadCharacter(PERSONAGEM_PADRAO.url, h, PERSONAGEM_PADRAO.nome, (m) => { $("petInfo").textContent = m; });
+    if (PET === PET_MUSH) PET = novo; PET_MUSH = novo; ataqueAtivo = null; mostrarPet(); stackStart = clock + 0.05;
+  } catch (err) { console.error(err); $("petInfo").textContent = "falha ao reconverter: " + err.message; }
+};
+$("arquivo").onchange = (e) => carregarArquivo(e.target.files[0]);
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("drop", (e) => { e.preventDefault(); carregarArquivo(e.dataTransfer.files[0]); });
+mostrarPet();
+addEventListener("keydown", (e) => { if (e.code === "KeyE" && pet.z === 0) { pet.yesUntil = clock + (PET.yesDur || 1.2); ataqueAtivo = null; pet.manualUntil = clock + 4; } });
+$("view").onclick = (e) => { S.onlyPet = !S.onlyPet; e.target.textContent = S.onlyPet ? "Ilha" : "Só o pet"; if (S.onlyPet) { S.zoom = 4; } else { S.zoom = 3; } $("zoom").value = S.zoom; layout(); stackStart = clock + 0.05; };
+
+layout();
+requestAnimationFrame(step);
+window.__poc = { S, pet, cam, F, get PET_MUSH() { return PET_MUSH; }, props, MATS, LUT, MAXL, FORA, DENTES, BRILHO_OLHO, PISCAR, CAM,
+  // a interface do estúdio (o segundo módulo desta página)
+  get PET() { return PET; }, get clock() { return clock; }, get ataque() { return ataqueAtivo; },
+  pararClipe() { ataqueAtivo = null; }, empilhar() { stackStart = clock + 0.05; }, semEmpilhar() { stackStart = -1e9; },
+  tocarClipe, nomeClipe, codigoClipe, mudarZoom, mudarInclinacao, layout, SUN, NOMES_DSTS, ATALHOS,
+  // a ficha do asset (o botão "Ficha"): o modelo da pose na tela, já aceso, e os cantos de cada placa na tela
+  modeloAtual: () => petInst().model, cantosFatia };
+/**
+ * Os 4 cantos, em pixels da arte, da placa da fatia k do pet como ela está na tela agora (com as fatias abertas S.gap): o retângulo
+ * da união das extensões de todas as fatias do modelo, girado e inclinado como em eachSlice. Para desenhar as placas da ficha.
+ */
+function cantosFatia(k) {
+  const inst = petInst(), M = inst.model;
+  let x0 = M.nx, x1 = 0, y0 = M.ny, y1 = 0;
+  for (let z = 0; z < M.nz; z++) { const e = z * 4; if (M.ext[e] < M.ext[e + 1]) { x0 = Math.min(x0, M.ext[e]); x1 = Math.max(x1, M.ext[e + 1]); y0 = Math.min(y0, M.ext[e + 2]); y1 = Math.max(y1, M.ext[e + 3]); } }
+  const [ox, oy] = toScreen(inst.x, inst.y, 0), a = cam.rot + inst.yaw, ca = Math.cos(a), sa = Math.sin(a), f = cam.f;
+  const zk = sliceZ(inst, k, S.gap);
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([gx, gy]) => {
+    const lx = gx - M.cx, ly = gy - M.cy;
+    return [ox + ca * lx - sa * ly, oy - zk + f * (sa * lx + ca * ly)];
+  });
+}
+setTimeout(async () => {
+  try {
+    $("info").textContent = "carregando e convertendo o Agumon...";
+    $("petInfo").textContent = "Carregando o Agumon DSTS embutido; a reserva menta só aparece durante a conversão.";
+    const started = performance.now();
+    PET_MUSH = await loadCharacter(PERSONAGEM_PADRAO.url, PERSONAGEM_PADRAO.altura, PERSONAGEM_PADRAO.nome,
+      (message) => { $("info").textContent = message; $("petInfo").textContent = message; });
+    if (PET === PET_V1) PET = PET_MUSH;
+    mostrarPet(); stackStart = clock + 0.05;
+    $("info").textContent = `Agumon pronto · conversão em ${(performance.now() - started).toFixed(0)} ms`;
+  } catch (err) {
+    console.error("Falha ao carregar/converter assets/agumon.glb", err);
+    $("info").textContent = `Agumon GLB indisponível: ${err.message} · usando o pet procedural`;
+    $("petInfo").textContent = `Agumon não carregou (${err.message}). O Agumon está incorporado nesta página; o personagem exibido é a reserva procedural. Confira o erro no console.`;
+  }
+}, 80);
+</script>
+<script type="module">
+// ============================================================================================================
+// A interface do estúdio. Lê e mexe no motor só por window.__poc (o módulo de cima); os ids antigos continuam lá para o motor.
+// O desenho e o porquê de cada zona: vault, "POC voxel — análise de UX e estúdio (2026-11-21)".
+// ============================================================================================================
+const P = window.__poc, $ = (id) => document.getElementById(id), corpo = document.body;
+const SVG_PAUSA = '<path d="M8 5h3v14H8zM13 5h3v14h-3z"/>', SVG_TOCAR = '<path d="M7 4l13 8-13 8z"/>';
+
+// ---- as animações por categoria (os nomes da tabela do dsts-viewer; a tecla é a do motor, P.ATALHOS)
+const ABAS = [
+  { id: "estados", nome: "Estados", clipes: ["bn01", "br01", "fq01", "fq02", "bn02"] },
+  { id: "golpes", nome: "Golpes", clipes: ["ba01", "ba02", "bs01", "bs02", "bf01"] },
+  { id: "defesa", nome: "Defesa", clipes: ["bg01", "bg02", "bd01", "bd02", "bd03"] },
+  { id: "vida", nome: "Vida", clipes: ["fe01", "fe03", "fe02", "bv01", "fe04"] },
+  { id: "cenas", nome: "Cenas", clipes: null },          // o resto (e002, e100...), pelo código
+];
+const NOMES_CURTOS = {
+  bn01: "Parado", br01: "Correr", fq01: "Sim", fq02: "Não", bn02: "Cansado", ba01: "Garra", ba02: "Mordida de fogo",
+  bs01: "Pepper Breath", bs02: "Pepper Breath II", bf01: "Ação de campo", bg01: "Defesa", bg02: "Esquiva", bd01: "Dano",
+  bd02: "Cai", bd03: "Levanta", fe01: "Comer", fe03: "Bocejo", fe02: "Vitória (campo)", bv01: "Vitória", fe04: "Luta (campo)",
+};
+let abaAtual = "golpes", clipeAtual = null, repetir = false, ultimoTempo = 1, convertendo = false;
+
+const clipePorCodigo = (c) => (P.PET.clipes || []).find((n) => P.codigoClipe(n) === c);
+function montarAbas() {
+  $("abas").replaceChildren(...ABAS.map((a) => {
+    const b = document.createElement("button"); b.textContent = a.nome; b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", a.id === abaAtual); b.onclick = () => { abaAtual = a.id; montarAbas(); montarChips(); };
+    return b;
+  }), Object.assign(document.createElement("span"), { className: "espaco" }),
+     Object.assign(document.createElement("span"), { className: "rotulo", textContent: `${(P.PET.clipes || []).length} clipes` }));
+}
+function montarChips() {
+  const aba = ABAS.find((a) => a.id === abaAtual), todos = P.PET.clipes || [];
+  const usados = new Set(ABAS.flatMap((a) => a.clipes || []));
+  const codigos = aba.clipes || todos.map(P.codigoClipe).filter((c) => c && !usados.has(c));
+  const chips = codigos.filter((c) => clipePorCodigo(c)).map((c) => {
+    const b = document.createElement("button"); b.className = "chip"; b.dataset.codigo = c;
+    const tecla = P.ATALHOS.indexOf(c);
+    b.innerHTML = `<span class="nome">${NOMES_CURTOS[c] || c}</span><span class="meta"><span class="codigo">${c}</span>${tecla >= 0 ? `<span class="tecla">${tecla + 1}</span>` : ""}</span>`;
+    b.setAttribute("aria-pressed", c === clipeAtual);
+    b.onclick = () => tocar(c);
+    return b;
+  });
+  $("chips").replaceChildren(...(chips.length ? chips : [Object.assign(document.createElement("span"), { className: "rotulo", textContent: "sem clipes aqui" })]));
+}
+function marcarChip() { for (const b of $("chips").children) if (b.dataset) b.setAttribute("aria-pressed", b.dataset.codigo === clipeAtual); }
+
+/** toca um clipe pelo código: o parado volta ao estado do pet; o resto é convertido (uma vez) e tocado por cima */
+function tocar(c, jaTocado = false) {          // jaTocado: o motor já tocou (as teclas 1–9)
+  const nome = clipePorCodigo(c);
+  if (!nome) return;
+  clipeAtual = c; marcarChip();
+  if (c === "bn01") { P.pararClipe(); avisar(`<b>Parado</b> · bn01`); return; }
+  const chip = [...$("chips").children].find((b) => b.dataset?.codigo === c);
+  chip?.classList.add("carregando"); convertendo = true;
+  if (!jaTocado) P.tocarClipe(nome, repetir || c === "br01");
+  // a conversão roda num setTimeout do motor; espera o clipe virar o ativo para avisar
+  const t0 = performance.now(), esperar = () => {
+    const a = P.ataque;
+    if (a && a.inicio >= P.clock - 0.5 && performance.now() - t0 < 15000 && $("petInfo").textContent.includes(c)) {
+      chip?.classList.remove("carregando"); convertendo = false; avisar(`<b>${NOMES_CURTOS[c] || c}</b> · ${a.frames.length} quadros voxel · ${a.dur.toFixed(2)} s`);
+    } else if (performance.now() - t0 < 15000) setTimeout(esperar, 60); else { chip?.classList.remove("carregando"); convertendo = false; }
+  };
+  setTimeout(esperar, 60);
+}
+
+// ---- o aviso curto
+let avisoT = 0;
+function avisar(html) { const a = $("aviso"); a.innerHTML = html; a.classList.add("ver"); clearTimeout(avisoT); avisoT = setTimeout(() => a.classList.remove("ver"), 1800); }
+
+// ---- a cena
+function mudarCena(fundo) {
+  P.S.fundo = fundo === "ilha" ? P.S.fundo : fundo;
+  const ilha = fundo === "ilha";
+  if (P.S.onlyPet === ilha) { P.S.onlyPet = !ilha; P.mudarZoom((ilha ? 3 : 4) - P.S.zoom); P.empilhar(); }
+  for (const b of $("cena").children) b.setAttribute("aria-pressed", b.dataset.fundo === fundo);
+}
+for (const b of $("cena").children) b.onclick = () => mudarCena(b.dataset.fundo);
+
+// ---- os presets de câmera: o giro relativo à frente do pet e a inclinação, com transição suave
+const PRESETS = {
+  tres: { giro: -0.3 * Math.PI, incl: 0.62 }, frente: { giro: 0, incl: 0.62 }, perfil: { giro: -0.5 * Math.PI, incl: 0.62 },
+  costas: { giro: Math.PI, incl: 0.62 }, topo: { giro: -0.3 * Math.PI, incl: 1.0 }, heroi: { giro: -0.18 * Math.PI, incl: 0.4 },
+};
+const ORDEM = Object.keys(PRESETS);
+let presetAtual = "tres", transInc = null;
+function irPreset(nome) {
+  const pr = PRESETS[nome]; presetAtual = nome;
+  const frente = Math.PI / 2 - P.pet.h, alvo = frente + pr.giro;
+  const atual = P.CAM.alvo, delta = Math.atan2(Math.sin(alvo - atual), Math.cos(alvo - atual));   // pelo caminho curto
+  P.CAM.alvo = atual + delta; P.CAM.vel = 0; P.CAM.ultimoToque = P.clock;
+  transInc = { de: P.S.pitch, para: pr.incl, t0: performance.now(), dur: 450 };
+  for (const b of document.querySelectorAll(".preset[data-preset]")) b.setAttribute("aria-pressed", b.dataset.preset === nome);
+}
+for (const b of document.querySelectorAll(".preset[data-preset]")) b.onclick = () => irPreset(b.dataset.preset);
+$("bGiro").onclick = () => { $("turn").checked = !$("turn").checked; $("turn").dispatchEvent(new Event("change")); };
+
+// ---- o tempo: pausar (congela o mundo, a câmera segue) e a velocidade
+function definirTempo(t) {
+  P.S.tempo = t; if (t > 0) ultimoTempo = t;
+  $("icTocar").innerHTML = t === 0 ? SVG_TOCAR : SVG_PAUSA;
+  for (const b of $("velocidade").children) b.setAttribute("aria-pressed", +b.dataset.tempo === (t || ultimoTempo));
+}
+$("bTocar").onclick = () => { definirTempo(P.S.tempo === 0 ? ultimoTempo : 0); avisar(P.S.tempo === 0 ? "<b>Tempo congelado</b> · gire a câmera" : "<b>Tempo</b> de volta"); };
+for (const b of $("velocidade").children) b.onclick = () => { definirTempo(+b.dataset.tempo); avisar(`<b>Velocidade</b> ${b.textContent}`); };
+$("bRepetir").onclick = () => { repetir = !repetir; $("bRepetir").setAttribute("aria-pressed", repetir); if (clipeAtual && clipeAtual !== "bn01") tocar(clipeAtual); };
+
+// ---- a luz: o sol gira ao vivo (a luz é por voxel, a cada quadro)
+function atualizarSol() {
+  const a = +$("sol").value * Math.PI / 180, e = +$("solAlt").value * Math.PI / 180;
+  P.SUN[0] = Math.cos(e) * Math.cos(a); P.SUN[1] = Math.cos(e) * Math.sin(a); P.SUN[2] = Math.sin(e);
+  $("oSol").textContent = `${$("sol").value}°`; $("oSolAlt").textContent = `${$("solAlt").value}°`;
+}
+$("sol").addEventListener("input", atualizarSol); $("solAlt").addEventListener("input", atualizarSol);
+
+// ---- explodir as fatias: abre, segura e junta (o momento que explica a técnica)
+let explosao = null;
+function explodir() { if (!explosao) { explosao = { t0: performance.now() }; avisar("<b>Fatias</b> · cada camada é um desenho plano"); } }
+$("bExplodir").onclick = explodir;
+
+// ---- a gaveta, a ajuda, o modo foto
+$("bRender").onclick = () => { const f = $("gaveta").classList.toggle("fechada"); $("bRender").setAttribute("aria-pressed", !f); };
+const abrirAjuda = (v) => $("ajuda").classList.toggle("esconder", !v);
+$("bAjuda").onclick = () => abrirAjuda(true); $("fecharAjuda").onclick = () => abrirAjuda(false);
+$("ajuda").onclick = (e) => { if (e.target === $("ajuda")) abrirAjuda(false); };
+let fotoT = 0;
+function modoFoto(v) {
+  corpo.classList.toggle("foto", v);
+  const d = $("fotoDica"); d.classList.add("ver"); clearTimeout(fotoT); fotoT = setTimeout(() => d.classList.remove("ver"), 2200);
+}
+$("bFoto").onclick = () => modoFoto(true);
+
+addEventListener("keydown", (e) => {
+  if (e.target.matches?.("input, select, textarea")) return;
+  if (e.code === "KeyH") modoFoto(!corpo.classList.contains("foto"));
+  else if (e.code === "KeyP") $("bTocar").click();
+  else if (e.code === "KeyX") explodir();
+  else if (e.code === "KeyC") irPreset(ORDEM[(ORDEM.indexOf(presetAtual) + 1) % ORDEM.length]);
+  else if (e.key === "?" || (e.code === "Slash" && e.shiftKey)) abrirAjuda($("ajuda").classList.contains("esconder"));
+  else if (e.code === "Escape") { abrirAjuda(false); modoFoto(false); }
+  const d = /^Digit([1-9])$/.exec(e.code);                    // o motor já toca pelo número; aqui só se marca o chip
+  if (d && P.PET.clipes) {
+    const c = P.ATALHOS[+d[1] - 1], aba = ABAS.find((a) => a.clipes?.includes(c));
+    if (aba && aba.id !== abaAtual) { abaAtual = aba.id; montarAbas(); montarChips(); }
+    tocar(c, true);
+  }
+  if (e.code === "KeyE") { clipeAtual = "fq01"; marcarChip(); }
+});
+
+// ---- a dica de teclado some depois de um tempo parado
+let ultimaMexida = performance.now();
+for (const ev of ["pointerdown", "keydown", "wheel"]) addEventListener(ev, () => { ultimaMexida = performance.now(); }, { passive: true });
+
+// ---- o carregamento: as etapas pelo texto que o motor escreve em #info
+const ETAPAS = [["textura", /texturas/], ["parado", /bn01|Parado/], ["correr", /br01|Correr/], ["sim", /fq01|Sim/]];
+let pronto = false;
+function atualizarCarga() {
+  const txt = $("petInfo").textContent; if (!pronto) $("cargaTxt").textContent = txt || "carregando…";
+  const i = ETAPAS.findIndex(([, re]) => re.test(txt));
+  if (i >= 0) [...$("etapas").children].forEach((li, k) => { li.className = k < i ? "feito" : k === i ? "agora" : ""; });
+  if (!pronto && P.PET.usados) {
+    pronto = true; [...$("etapas").children].forEach((li) => { li.className = "feito"; });
+    setTimeout(() => { $("carga").classList.add("saindo"); setTimeout(() => $("carga").classList.add("esconder"), 450); }, 350);
+    montarAbas(); montarChips(); irPreset("tres");
+    avisar("<b>Agumon pronto</b> · experimente os golpes 1–9");
+  }
+}
+
+// ---- o laço da interface: progresso do clipe, transições, explosão, pílulas
+let ultimoPet = null, pilulasT = 0;
+function laco(agora) {
+  requestAnimationFrame(laco);
+  atualizarCarga();
+  if (P.PET !== ultimoPet) { ultimoPet = P.PET; montarAbas(); montarChips(); }
+  // a barra do clipe
+  const a = P.ataque; let u = 0, rotulo = "<b>Parado</b> · bn01";
+  if (a && (a.repetir ? P.pet.v <= 3 : P.clock < a.inicio + a.dur)) {
+    u = (P.clock - a.inicio) / a.dur; u = a.repetir ? u - Math.floor(u) : Math.min(1, Math.max(0, u));
+    rotulo = `<b>${NOMES_CURTOS[clipeAtual] || clipeAtual || "clipe"}</b> · ${clipeAtual || ""}`;
+  } else if (P.pet.v > 3) { rotulo = "<b>Correndo</b> · br01"; u = (P.pet.dist / (P.PET.passo * P.PET.walk.length)) % 1; }
+  else if (convertendo) rotulo = `<b>${NOMES_CURTOS[clipeAtual] || clipeAtual}</b> · convertendo em voxels…`;
+  else if (clipeAtual && clipeAtual !== "bn01" && clipeAtual !== "fq01" && !(a && a.repetir)) { clipeAtual = null; marcarChip(); }
+  $("barra").firstElementChild.style.width = `${(u * 100).toFixed(1)}%`;
+  if ($("tocando").innerHTML !== rotulo) $("tocando").innerHTML = rotulo;
+  // a transição da inclinação dos presets
+  if (transInc) {
+    const k = Math.min(1, (agora - transInc.t0) / transInc.dur), s = 1 - (1 - k) ** 3;
+    P.mudarInclinacao(transInc.de + (transInc.para - transInc.de) * s); if (k >= 1) transInc = null;
+  }
+  // a explosão das fatias: abre em 0,5 s, segura 0,9 s, junta em 0,6 s
+  if (explosao) {
+    const t = (agora - explosao.t0) / 1000, max = 1.3;   // 1,3: o Agumon de 84 fatias ainda cabe na tela
+    const g = t < 0.5 ? max * (1 - (1 - t / 0.5) ** 3) : t < 1.4 ? max : t < 2.0 ? max * (1 - ((t - 1.4) / 0.6) ** 2) : 0;
+    P.S.gap = g; $("gap").value = g.toFixed(1); if (t >= 2.0) explosao = null;
+  }
+  // as saídas dos sliders e as pílulas (2x por segundo)
+  $("oPitch").textContent = P.S.pitch.toFixed(2).replace(".", ","); $("oZoom").textContent = P.S.zoom; $("oGap").textContent = (+P.S.gap).toFixed(1).replace(".", ",");
+  $("bGiro").setAttribute("aria-pressed", $("turn").checked);
+  if (agora - pilulasT > 500) {
+    pilulasT = agora;
+    const m = /([\d.]+) ms por quadro/.exec($("info").textContent);
+    if (m) $("pMs").innerHTML = `<b>${m[1].replace(".", ",")}</b> ms`;
+    const M = P.PET.idle?.[0]; if (M?.cells) $("pVox").innerHTML = `<b>${(M.cells.length / 1000).toFixed(0)} mil</b> voxels`;
+    $("pArte").innerHTML = `<b>${P.F.W}×${P.F.H}</b> px`;
+  }
+  $("dica").classList.toggle("apagada", agora - ultimaMexida > 7000);
+  corpo.style.setProperty("--sobre-doca", `${$("doca").offsetHeight + 28}px`);   // a dica fica logo acima da doca
+}
+definirTempo(1); atualizarSol(); montarAbas(); montarChips();
+if (matchMedia("(max-width: 760px)").matches) P.mudarZoom(3 - P.S.zoom);   // no celular o pixel menor: o Agumon cabe com folga
+requestAnimationFrame(laco);
+window.__estudio = { tocar, irPreset, mudarCena, explodir, modoFoto, definirTempo, avisar };
+
+// ============================================================================================================
+// A ficha do asset: mostra como o Agumon foi feito. À esquerda, cada fatia horizontal do modelo voxel vista de cima (é o que o
+// motor desenha, camada por camada); à direita, o stack aberto em isométrico com as placas e a pixel art empilhada de frente e de
+// costas. As vistas saem do próprio render (o buffer F, só os pixels do pet), então a ficha é o que a POC mostra, não um desenho.
+// ============================================================================================================
+const proximoQuadro = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+/** só os pixels do pet (oid 1) do último quadro, recortados; devolve o canvas e a origem do recorte em pixels da arte */
+function recortePet() {
+  const { W, H, oid, img } = P.F, d = img.data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (oid[y * W + x] === 1) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) throw new Error("o pet não apareceu na tela para a ficha");
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, out = new ImageData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const p = (y + y0) * W + x + x0, q = (y * w + x) * 4;
+    if (oid[p] !== 1) continue;
+    out.data[q] = d[p * 4]; out.data[q + 1] = d[p * 4 + 1]; out.data[q + 2] = d[p * 4 + 2]; out.data[q + 3] = 255;
+  }
+  const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").putImageData(out, 0, 0);
+  return { c, x0, y0, w, h };
+}
+/** as fatias do modelo, vistas de cima, com a cor já acesa de cada voxel (a rampa e o nível que o motor usou neste quadro) */
+function fatiasDoModelo(M) {
+  let x0 = M.nx, x1 = 0, y0 = M.ny, y1 = 0, k0 = -1, k1 = -1;
+  for (let z = 0; z < M.nz; z++) { const e = z * 4; if (M.ext[e] < M.ext[e + 1]) { if (k0 < 0) k0 = z; k1 = z; x0 = Math.min(x0, M.ext[e]); x1 = Math.max(x1, M.ext[e + 1]); y0 = Math.min(y0, M.ext[e + 2]); y1 = Math.max(y1, M.ext[e + 3]); } }
+  const w = x1 - x0, h = y1 - y0, n = k1 - k0 + 1, imgs = Array.from({ length: n }, () => new ImageData(w, h));
+  for (let j = 0; j < M.cells.length; j++) {
+    const c = M.cells[j], ci = M.col[c]; if (ci < 0) continue;
+    const x = c % M.nx, y = ((c / M.nx) | 0) % M.ny, z = (c / (M.nx * M.ny)) | 0, rgba = P.LUT[ci];
+    const d = imgs[z - k0].data, q = ((y - y0) * w + (x - x0)) * 4;
+    d[q] = rgba & 255; d[q + 1] = (rgba >> 8) & 255; d[q + 2] = (rgba >> 16) & 255; d[q + 3] = 255;
+  }
+  return { w, h, n, k0, canvases: imgs.map((im) => { const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").putImageData(im, 0, 0); return c; }) };
+}
+async function gerarFicha() {
+  const S = P.S, guardado = { zoom: S.zoom, gap: S.gap, pitch: S.pitch, fundo: S.fundo, onlyPet: S.onlyPet, outline: S.outline, tempo: S.tempo,
+    alvo: P.CAM.alvo, forcar: P.PISCAR.forcar, preset: presetAtual, foto: corpo.classList.contains("foto") };
+  try {
+    P.pararClipe(); P.semEmpilhar(); clipeAtual = null; marcarChip(); P.PISCAR.forcar = false;   // sem a queda das fatias no meio
+    S.fundo = "claro"; S.onlyPet = true; S.outline = true; S.gap = 0; S.tempo = 1;
+    S.zoom = 1; P.layout();                                    // pixel 1: a arte na resolução do motor
+    await proximoQuadro(); S.tempo = 0;                        // congela numa pose do parado
+    const vista = async (preset, gap) => { irPreset(preset); S.gap = gap; await esperar(900); await proximoQuadro(); return recortePet(); };
+    const frente = await vista("tres", 0);
+    const M = P.modeloAtual(), fat = fatiasDoModelo(M);        // as fatias acesas como na vista de 3/4
+    const costas = await vista("costas", 0);
+    const GAP = 2.2, aberto = await vista("tres", GAP);
+    const passo = Math.max(1, Math.round(fat.n / 12)), placas = [];
+    for (let k = 0; k < fat.n; k += passo) placas.push(P.cantosFatia(fat.k0 + k).map(([x, y]) => [x - aberto.x0, y - aberto.y0]));
+    placas.push(P.cantosFatia(fat.k0 + fat.n - 1).map(([x, y]) => [x - aberto.x0, y - aberto.y0]));
+    return desenharFicha({ frente, costas, aberto, placas, fat, GAP });
+  } finally {
+    Object.assign(S, { gap: guardado.gap, fundo: guardado.fundo, onlyPet: guardado.onlyPet, outline: guardado.outline, tempo: guardado.tempo });
+    S.zoom = guardado.zoom; P.layout(); P.mudarInclinacao(guardado.pitch); P.PISCAR.forcar = guardado.forcar; irPreset(guardado.preset);
+    if (guardado.foto) corpo.classList.add("foto");
+  }
+}
+function desenharFicha({ frente, costas, aberto, placas, fat, GAP }) {
+  const LW = 3840, LH = 2160, U = LW / 2560, u = (n) => Math.round(n * U), cv = document.createElement("canvas"); cv.width = LW; cv.height = LH;
+  const g = cv.getContext("2d"); g.imageSmoothingEnabled = false;
+  const COR = { fundo: "#111724", painel: "#172031", borda: "#2b3650", celula: "#1a2335", bordaCel: "#2d3a55", texto: "#f2f4f8", texto2: "#9aa5bb", texto3: "#6c7894", acento: "#ff9f1c" };
+  const fonte = (peso, px, fam = "Space Grotesk") => `${peso} ${px}px "${fam}", system-ui, sans-serif`;
+  const retangulo = (x, y, w, h, r, fill, stroke) => { g.beginPath(); g.roundRect(x, y, w, h, r); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = 2 * U; g.stroke(); } };
+  g.fillStyle = COR.fundo; g.fillRect(0, 0, LW, LH);
+  // o título
+  g.fillStyle = COR.texto; g.font = fonte(700, u(64)); g.textBaseline = "alphabetic";
+  g.fillText("SPRITE STACKING · FICHA DO ASSET: AGUMON", u(64), u(104));
+  g.fillStyle = COR.texto2; g.font = fonte(400, u(30));
+  g.fillText(`Definição do stack • fatias de ${fat.w}×${fat.h} px • altura: ${fat.n} camadas (eixo Z, Z=0 a Z=${fat.n - 1}) • malha 3D do jogo convertida em voxels no navegador`, u(64), u(152));
+  // à esquerda: as fatias numa grade, de baixo (#01) para cima, como na referência
+  const AX = u(64), AY = u(250), AW = u(1210), AH = LH - AY - u(90), GAPC = u(10);
+  let melhor = null;
+  for (let cols = 7; cols <= 14; cols++) {
+    const rows = Math.ceil(fat.n / cols), cel = Math.floor(Math.min((AW + GAPC) / cols, (AH + GAPC) / rows)) - GAPC;
+    const esc = Math.floor((cel - u(8)) / Math.max(fat.w, fat.h));     // margem pequena: cabe a escala 2
+    if (esc >= 1 && (!melhor || esc > melhor.esc || (esc === melhor.esc && cel > melhor.cel))) melhor = { cols, rows, cel, esc };
+  }
+  const { cols, rows, cel, esc } = melhor;
+  g.fillStyle = COR.texto; g.font = fonte(700, u(34));
+  g.fillText(`${fat.n} FATIAS HORIZONTAIS (${fat.w}×${fat.h} px CADA)`, AX, AY - u(26));
+  for (let k = 0; k < fat.n; k++) {
+    const linha = rows - 1 - Math.floor(k / cols), coluna = k % cols;
+    const x = AX + coluna * (cel + GAPC), y = AY + linha * (cel + GAPC);
+    retangulo(x, y, cel, cel, u(8), COR.celula, COR.bordaCel);
+    const sw = fat.w * esc, sh = fat.h * esc;
+    g.drawImage(fat.canvases[k], Math.round(x + (cel - sw) / 2), Math.round(y + (cel - sh) / 2 - u(3)), sw, sh);
+    g.fillStyle = COR.texto2; g.font = fonte(600, u(15), "JetBrains Mono"); g.textAlign = "right";
+    g.fillText(`#${String(k + 1).padStart(2, "0")}`, x + cel - u(7), y + cel - u(7)); g.textAlign = "left";
+  }
+  // à direita: o painel do stack 3D
+  const PX = AX + AW + u(50), PY = AY, PW = LW - PX - u(64), PH = LH - PY - u(90);
+  retangulo(PX, PY, PW, PH, u(18), COR.painel, COR.borda);
+  g.fillStyle = COR.texto; g.font = fonte(700, u(34));
+  g.fillText(`VISUALIZAÇÃO DO STACK 3D (${fat.n} CAMADAS)`, PX, AY - u(26));
+  const colW = (PW - u(96)) / 2, c1 = PX + u(32), c2 = PX + u(64) + colW, topo = PY + u(80), altura = PH - u(110);
+  g.font = fonte(700, u(24)); g.textAlign = "center";
+  g.fillText("STACK ISOMÉTRICO ABERTO", c1 + colW / 2, PY + u(48)); g.fillText("PIXEL ART EMPILHADA", c2 + colW / 2, PY + u(48)); g.textAlign = "left";
+  // o stack aberto, com as placas por cima (tracejado nas arestas verticais da caixa)
+  // o enquadramento é a caixa do Agumon e das placas juntos (as placas passam da silhueta)
+  let mx0 = 0, my0 = 0, mx1 = aberto.w, my1 = aberto.h;
+  for (const pl of placas) for (const [x, y] of pl) { mx0 = Math.min(mx0, x); my0 = Math.min(my0, y); mx1 = Math.max(mx1, x); my1 = Math.max(my1, y); }
+  const ea = Math.max(1, Math.floor(Math.min((colW - u(170)) / (mx1 - mx0), (altura - u(20)) / (my1 - my0))));
+  const ax = Math.round(c1 + (colW - u(170) - (mx1 - mx0) * ea) / 2 - mx0 * ea), ay = Math.round(topo + u(20) + (altura - u(20) - (my1 - my0) * ea) / 2 - my0 * ea);
+  const pt = ([x, y]) => [ax + x * ea, ay + y * ea];
+  g.drawImage(aberto.c, ax, ay, aberto.w * ea, aberto.h * ea);
+  g.strokeStyle = "rgba(190, 205, 235, .55)"; g.lineWidth = 1.5 * U;
+  for (const pl of placas) { g.beginPath(); pl.forEach((p, i) => { const [x, y] = pt(p); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath(); g.stroke(); }
+  g.setLineDash([u(6), u(6)]); g.strokeStyle = "rgba(190, 205, 235, .35)";
+  const base = placas[0], cima = placas[placas.length - 1];
+  for (let i = 0; i < 4; i++) { const [xa, ya] = pt(base[i]), [xb, yb] = pt(cima[i]); g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb, yb); g.stroke(); }
+  g.setLineDash([]);
+  // os rótulos ao lado do stack aberto
+  const lx = ax + mx1 * ea + u(26);                       // à direita da placa mais larga
+  g.fillStyle = COR.texto; g.font = fonte(500, u(26));
+  g.fillText(`${fat.n} camadas`, lx, ay + aberto.h * ea * 0.22); g.fillText("abertas", lx, ay + aberto.h * ea * 0.22 + u(32));
+  g.fillText("Offset Z:", lx, ay + aberto.h * ea * 0.52); g.fillText("1 px por camada", lx, ay + aberto.h * ea * 0.52 + u(32));
+  g.fillStyle = COR.texto3; g.font = fonte(400, u(20));
+  g.fillText(`(aqui aberto ${(1 + GAP).toFixed(1).replace(".", ",")} px)`, lx, ay + aberto.h * ea * 0.52 + u(62));
+  // a pixel art empilhada: de 3/4 em cima, de costas embaixo
+  const meia = (altura - u(30)) / 2;
+  for (const [img, i, rot] of [[frente, 0, "3/4 de frente"], [costas, 1, "de costas"]]) {
+    const e = Math.max(1, Math.floor(Math.min(colW / img.w, (meia - u(40)) / img.h)));
+    const x = Math.round(c2 + (colW - img.w * e) / 2), y = Math.round(topo + i * (meia + u(30)) + (meia - u(40) - img.h * e) / 2);
+    g.drawImage(img.c, x, y, img.w * e, img.h * e);
+    g.fillStyle = COR.texto3; g.font = fonte(500, u(20)); g.textAlign = "center";
+    g.fillText(rot, c2 + colW / 2, topo + i * (meia + u(30)) + meia - u(8)); g.textAlign = "left";
+  }
+  // o rodapé: o crédito e a origem
+  g.fillStyle = COR.texto3; g.font = fonte(400, u(20));
+  g.fillText("Agumon © Bandai Namco · modelo de Digimon Story Time Stranger (chr050), convertido para demonstração técnica · POC voxel stack, render do próprio motor", u(64), LH - u(36));
+  return cv;
+}
+async function mostrarFicha() {
+  const b = $("bFicha"); b.disabled = true; avisar("<b>Ficha</b> · fatiando e montando…");
+  try {
+    const cv = await gerarFicha(), url = cv.toDataURL("image/png");
+    $("fichaImg").src = url; $("fichaBaixar").href = url; $("ficha").classList.remove("esconder");
+    window.__fichaUrl = url;
+  } catch (err) { console.error(err); avisar(`<b>Ficha</b> · falhou: ${err.message}`); }
+  finally { b.disabled = false; }
+}
+$("bFicha").onclick = mostrarFicha;
+$("fichaFechar").onclick = () => $("ficha").classList.add("esconder");
+window.__estudio.ficha = async () => (await gerarFicha()).toDataURL("image/png");
+
+</script>
+</body>
+</html>

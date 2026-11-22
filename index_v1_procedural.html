@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POC voxel stack</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16302f; overflow: hidden; font: 13px system-ui, sans-serif; color: #e8f3ee; }
+  canvas { display: block; image-rendering: pixelated; touch-action: none; cursor: grab; }
+  #ui { position: fixed; left: 12px; top: 12px; background: rgba(8, 18, 18, .74); padding: 10px 12px; border-radius: 10px;
+        display: flex; flex-direction: column; gap: 6px; width: 250px; }
+  #ui label { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  #ui input[type=range] { width: 120px; }
+  button { background: #2e5e57; color: #fff; border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; font: inherit; }
+  button:hover { background: #3a7569; }
+  .muted { opacity: .72; font-size: 12px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <b>POC: pet em voxel (sprite stacking)</b>
+  <label>Inclinação <input id="pitch" type="range" min="0.35" max="1" step="0.01" value="0.62"></label>
+  <label>Fatias abertas <input id="gap" type="range" min="0" max="3" step="0.1" value="0"></label>
+  <label>Pixel <input id="zoom" type="range" min="2" max="9" step="1" value="4"></label>
+  <label>Contorno <input id="outline" type="checkbox" checked></label>
+  <label>Câmera gira sozinha <input id="turn" type="checkbox" checked></label>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button id="stack">Empilhar de novo</button><button id="view">Só o pet</button>
+  </div>
+  <div class="muted">arrastar: girar · WASD/setas: andar · espaço: pular</div>
+  <div class="muted" id="info"></div>
+</div>
+<script>
+"use strict";
+// ============================================================================================================
+// Renderizador de sprite stacking, escrito do zero para esta POC (só a ideia vem do moon-stack: cada camada z de
+// um modelo voxel é uma fatia plana, girada e desenhada 1 px acima da anterior; num pixel da tela a fatia mais
+// alta é a mais próxima, então um buffer de profundidade em z ordena tudo; a luz é por voxel, pela normal).
+// ============================================================================================================
+
+const RAMPS = {               // escuro -> claro; um pixel é (material, nível)
+  grass: ["#1d3823", "#26482b", "#2f5831", "#3a6936", "#477a3d", "#578c46", "#6a9e50", "#80b15d"],
+  dirt:  ["#3a2a1e", "#4d3826", "#62472f", "#78583a", "#8e6a47", "#a57d56", "#bb9266"],
+  sand:  ["#5a4a33", "#7a6646", "#9a845c", "#b7a174", "#d0bb8c", "#e4d2a5"],
+  water: ["#0e2236", "#14304a", "#1b4262", "#24577e", "#30709c", "#4a8cb8", "#6fa9cf"],
+  mint:  ["#123431", "#1a4943", "#245f56", "#30786b", "#3f9282", "#52ab97", "#6fc4ac", "#97dcc2"],
+  cream: ["#4a3b2a", "#6b5739", "#8d774f", "#ae9867", "#cbb782", "#e2d2a0", "#f4e8c2", "#fff8e2"],
+  coral: ["#4a1a22", "#6e2630", "#93343d", "#b5464a", "#d25f5b", "#e97f71", "#f6a48e", "#ffc9b2"],
+  pink:  ["#6e3040", "#93475a", "#b86378", "#d78398", "#eea7b8"],
+  dark:  ["#07090d", "#0f1219", "#191d26", "#252a35", "#343a47"],
+  white: ["#9aa3ad", "#c4cbd2", "#e6eaee", "#ffffff"],
+  bark:  ["#22150d", "#332014", "#472e1c", "#5b3d26", "#714d31", "#89603e"],
+  leaf:  ["#122c1a", "#183d22", "#1f502a", "#286433", "#33793c", "#438f46", "#58a553", "#74bb63"],
+  stone: ["#232529", "#32353b", "#44474e", "#585b63", "#6e7279", "#868a90", "#a0a3a8", "#bec0c3"],
+  paper: ["#9fb0a8", "#bccbc4", "#d3dfd9", "#e6eeea", "#f3f7f5"],
+};
+const MATS = Object.keys(RAMPS);
+const MAT = Object.fromEntries(MATS.map((m, i) => [m, i + 1]));      // 0 = vazio
+const MAXL = Math.max(...MATS.map((m) => RAMPS[m].length));
+const NLEV = new Int16Array(MATS.length + 1);
+const LUT = new Uint32Array((MATS.length + 1) * MAXL);
+MATS.forEach((m, i) => {
+  const r = RAMPS[m]; NLEV[i + 1] = r.length;
+  for (let l = 0; l < MAXL; l++) {
+    const h = r[Math.min(l, r.length - 1)];
+    const R = parseInt(h.slice(1, 3), 16), G = parseInt(h.slice(3, 5), 16), B = parseInt(h.slice(5, 7), 16);
+    LUT[(i + 1) * MAXL + l] = ((255 << 24) | (B << 16) | (G << 8) | R) >>> 0;
+  }
+});
+
+function hash3(x, y, z) {
+  let h = Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663) ^ Math.imul(z | 0, 83492791);
+  h = Math.imul(h ^ (h >>> 13), 0x5bd1e995); h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+function rng(seed) { let s = seed >>> 0; return () => ((s = Math.imul(s ^ (s >>> 15), 2246822519) + 0x9e3779b9 >>> 0) / 4294967296); }
+
+// ---------------------------------------------------------------- formas (coordenadas locais, centro no chão)
+const ell = (cx, cy, cz, rx, ry, rz) => (X, Y, Z) => ((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2 + ((Z - cz) / rz) ** 2 <= 1;
+const and = (...fs) => (X, Y, Z) => fs.every((f) => f(X, Y, Z));
+function seg(a, b, r0, r1) {          // cápsula de a até b, raio de r0 a r1
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2;
+  return (X, Y, Z) => {
+    const px = X - a[0], py = Y - a[1], pz = Z - a[2];
+    const t = Math.max(0, Math.min(1, (px * d[0] + py * d[1] + pz * d[2]) / L2));
+    const r = r0 + (r1 - r0) * t;
+    return (px - t * d[0]) ** 2 + (py - t * d[1]) ** 2 + (pz - t * d[2]) ** 2 <= r * r;
+  };
+}
+
+class Vox {
+  constructor(nx, ny, nz, cx, cy) {
+    Object.assign(this, { nx, ny, nz, cx, cy });
+    const n = nx * ny * nz;
+    this.m = new Uint8Array(n); this.t = new Int8Array(n); this.g = new Uint8Array(n);
+  }
+  put(f, mat, { tw = 0, over = true, glow = 0, noise = 0, grain = 1, seed = 0 } = {}) {
+    const M = MAT[mat], { nx, ny, nz, cx, cy } = this;
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+      if (!over && this.m[i]) continue;
+      if (!f(x + 0.5 - cx, y + 0.5 - cy, z + 0.5)) continue;
+      this.m[i] = M; this.g[i] = glow;
+      this.t[i] = tw + (noise ? Math.round((hash3(x / grain, y / grain, z / grain + seed * 31) * 2 - 1) * noise) : 0);
+    }
+  }
+}
+
+function blur(a, nx, ny, nz, r) {     // média móvel separável nos três eixos
+  const out = new Float32Array(a.length), tmp = new Float32Array(a.length);
+  const pass = (src, dst, len, stride, count, startOf) => {
+    for (let c = 0; c < count; c++) {
+      const s0 = startOf(c);
+      for (let i = 0; i < len; i++) {
+        let sum = 0, n = 0;
+        for (let j = Math.max(0, i - r); j <= Math.min(len - 1, i + r); j++) { sum += src[s0 + j * stride]; n++; }
+        dst[s0 + i * stride] = sum / (2 * r + 1);   // fora da grade conta como vazio
+      }
+    }
+  };
+  pass(a, tmp, nx, 1, ny * nz, (c) => c * nx);
+  pass(tmp, out, ny, nx, nx * nz, (c) => (c / nx | 0) * nx * ny + (c % nx));
+  pass(out, tmp, nz, nx * ny, nx * ny, (c) => c);
+  return tmp;
+}
+
+/** Modelo pronto: voxels cheios, normal e oclusão por voxel, extensão de cada fatia. */
+function compile(v) {
+  const { nx, ny, nz, m } = v, N = nx * ny * nz;
+  const occ = new Float32Array(N);
+  for (let i = 0; i < N; i++) occ[i] = m[i] ? 1 : 0;
+  const b = blur(occ, nx, ny, nz, 2);
+  const at = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) ? 0 : b[(z * ny + y) * nx + x];
+  const cells = [], nrm = [], ao = [];
+  const ext = new Int16Array(nz * 4);
+  for (let k = 0; k < nz; k++) { ext[k * 4] = nx; ext[k * 4 + 1] = 0; ext[k * 4 + 2] = ny; ext[k * 4 + 3] = 0; }
+  for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+    if (!m[i]) continue;
+    let gx = at(x - 1, y, z) - at(x + 1, y, z), gy = at(x, y - 1, z) - at(x, y + 1, z), gz = at(x, y, z - 1) - at(x, y, z + 1);
+    const L = Math.hypot(gx, gy, gz);
+    if (L < 1e-4) { gx = 0; gy = 0; gz = 1; } else { gx /= L; gy /= L; gz /= L; }
+    cells.push(i); nrm.push(gx, gy, gz); ao.push(b[i]);
+    const e = z * 4;
+    if (x < ext[e]) ext[e] = x; if (x + 1 > ext[e + 1]) ext[e + 1] = x + 1;
+    if (y < ext[e + 2]) ext[e + 2] = y; if (y + 1 > ext[e + 3]) ext[e + 3] = y + 1;
+  }
+  const C = Int32Array.from(cells);
+  const mats = new Uint8Array(C.length), tw = new Int8Array(C.length), gl = new Uint8Array(C.length);
+  for (let j = 0; j < C.length; j++) { mats[j] = m[C[j]]; tw[j] = v.t[C[j]]; gl[j] = v.g[C[j]]; }
+  const col = new Int16Array(N).fill(-1);
+  return { nx, ny, nz, cx: v.cx, cy: v.cy, cells: C, mats, tw, gl, nrm: Float32Array.from(nrm), ao: Float32Array.from(ao), col, ext,
+           radius: Math.hypot(nx, ny) / 2 + 2, shadedFor: null };
+}
+
+/** Acende cada voxel com o sol já no referencial do modelo. */
+function shade(M, L, lift = 0) {
+  const { cells, mats, tw, gl, nrm, ao, col } = M;
+  for (let j = 0; j < cells.length; j++) {
+    const nd = nrm[j * 3] * L[0] + nrm[j * 3 + 1] * L[1] + nrm[j * 3 + 2] * L[2];
+    const mt = mats[j], nl = NLEV[mt];
+    const amb = 0.34 * (1.35 - 0.7 * ao[j]);                 // vincos mais fechados ficam mais escuros
+    let lev = gl[j] ? nl - 1 : Math.round((amb + 0.72 * Math.max(nd, 0)) * (nl - 1)) + tw[j];
+    lev += lift;
+    col[cells[j]] = mt * MAXL + (lev < 0 ? 0 : lev > nl - 1 ? nl - 1 : lev);
+  }
+}
+
+// ---------------------------------------------------------------- câmera e quadro
+const cam = { x: 0, y: 0, rot: 0.5, f: 0.62, lift: 14, W: 16, H: 16 };
+function toScreen(x, y, z = 0) {
+  const c = Math.cos(cam.rot), s = Math.sin(cam.rot), dx = x - cam.x, dy = y - cam.y;
+  return [c * dx - s * dy + cam.W / 2, cam.f * (s * dx + c * dy) + cam.H / 2 + cam.lift - z];
+}
+
+const F = {};
+function resizeFrame(W, H) {
+  Object.assign(F, { W, H, mat: new Uint8Array(W * H), lev: new Int8Array(W * H), dep: new Float32Array(W * H),
+    oid: new Uint8Array(W * H), shad: new Uint8Array(W * H), dark: new Int8Array(W * H), img: new ImageData(W, H) });
+  F.px = new Uint32Array(F.img.data.buffer);
+}
+
+// percorre os pixels cobertos por uma fatia (rasterização inversa) e chama hit(p, célula)
+function eachSlice(M, k, ox, oy, a, hit) {
+  const e = k * 4, x0 = M.ext[e], x1 = M.ext[e + 1], y0 = M.ext[e + 2], y1 = M.ext[e + 3];
+  if (x0 >= x1) return;
+  const ca = Math.cos(a), sa = Math.sin(a), f = cam.f, W = F.W, H = F.H;
+  let X0 = 1e9, X1 = -1e9, Y0 = 1e9, Y1 = -1e9;
+  for (const lx of [x0 - M.cx, x1 - M.cx]) for (const ly of [y0 - M.cy, y1 - M.cy]) {
+    const sx = ox + ca * lx - sa * ly, sy = oy + f * (sa * lx + ca * ly);
+    X0 = Math.min(X0, sx); X1 = Math.max(X1, sx); Y0 = Math.min(Y0, sy); Y1 = Math.max(Y1, sy);
+  }
+  X0 = Math.max(Math.floor(X0) - 1, 0); X1 = Math.min(Math.ceil(X1) + 1, W);
+  Y0 = Math.max(Math.floor(Y0) - 1, 0); Y1 = Math.min(Math.ceil(Y1) + 1, H);
+  const nx = M.nx, base = k * M.ny;
+  for (let sy = Y0; sy < Y1; sy++) {
+    const ry = (sy + 0.5 - oy) / f, rx = X0 + 0.5 - ox;
+    let lx = ca * rx + sa * ry + M.cx, ly = -sa * rx + ca * ry + M.cy;
+    for (let sx = X0, p = sy * W + X0; sx < X1; sx++, p++, lx += ca, ly -= sa) {
+      if (lx < x0 || ly < y0 || lx >= x1 || ly >= y1) continue;
+      hit(p, (base + (ly | 0)) * nx + (lx | 0));
+    }
+  }
+}
+
+function sliceZ(inst, k, gap) { return inst.z + k * (1 + gap) + (inst.off ? inst.off[k] : 0); }
+
+function drawInst(inst, gap) {
+  const M = inst.model, col = M.col, { mat, lev, dep, oid } = F, id = inst.oid;
+  const [ox, oy] = toScreen(inst.x, inst.y, 0), a = cam.rot + inst.yaw;
+  for (let k = 0; k < M.nz; k++) {
+    if (inst.vis && !inst.vis[k]) continue;
+    const zk = sliceZ(inst, k, gap), zz = zk + 0.5;
+    eachSlice(M, k, ox, oy - zk, a, (p, c) => {
+      const ci = col[c];
+      if (ci < 0 || zz <= dep[p]) return;
+      dep[p] = zz; mat[p] = (ci / MAXL) | 0; lev[p] = ci % MAXL; oid[p] = id;
+    });
+  }
+}
+
+function shadowInst(inst, gap, L) {
+  const M = inst.model, col = M.col, shad = F.shad, kx = L[0] / L[2], ky = L[1] / L[2], a = cam.rot + inst.yaw;
+  for (let k = 0; k < M.nz; k++) {
+    if (inst.landed && !inst.landed[k]) continue;
+    const h = sliceZ(inst, k, gap) + 0.5;
+    const [gx, gy] = toScreen(inst.x - h * kx, inst.y - h * ky, 0);
+    eachSlice(M, k, gx, gy, a, (p, c) => { if (col[c] >= 0) shad[p] = 1; });
+  }
+}
+
+// o chão: cada pixel volta para um texel do mundo, então a textura gira junto com a câmera
+const ISLAND = 190;
+function groundTexel(ix, iy, t) {
+  const d = Math.hypot(ix, iy) + (hash3(ix >> 3, iy >> 3, 7) - 0.5) * 10;
+  if (d > ISLAND + 12) {
+    const w = hash3(ix >> 1, iy >> 1, (t * 2) | 0);
+    return [MAT.water, w < 0.06 ? 5 : w < 0.5 ? 3 : 2];
+  }
+  if (d > ISLAND) return [MAT.sand, 3 + (hash3(ix, iy, 3) < 0.4 ? 1 : 0)];
+  const ring = Math.abs(Math.hypot(ix - 20, iy + 10) - 70);
+  if (ring < 5 + (hash3(ix >> 2, iy >> 2, 9) - 0.5) * 3) return [MAT.dirt, 3 + (hash3(ix, iy, 5) < 0.3 ? 1 : 0) - (hash3(ix, iy, 6) < 0.15 ? 1 : 0)];
+  const big = hash3(ix >> 4, iy >> 4, 1), mid = hash3(ix >> 2, iy >> 2, 2), fine = hash3(ix, iy, 4);
+  if (fine < 0.006) return [MAT.pink, 3];
+  if (fine > 0.995) return [MAT.white, 3];
+  return [MAT.grass, 3 + (big < 0.35 ? -1 : 0) + (mid < 0.25 ? -1 : mid > 0.8 ? 1 : 0) + (fine < 0.12 ? 1 : 0)];
+}
+
+function drawGround(t, plain) {
+  const { W, H, mat, lev, dep, oid } = F, c = Math.cos(cam.rot), s = Math.sin(cam.rot);
+  for (let sy = 0, p = 0; sy < H; sy++) {
+    const ry = (sy + 0.5 - H / 2 - cam.lift) / cam.f, rx0 = 0.5 - W / 2;
+    let wx = c * rx0 + s * ry + cam.x, wy = -s * rx0 + c * ry + cam.y;
+    for (let sx = 0; sx < W; sx++, p++, wx += c, wy -= s) {
+      if (plain) { mat[p] = MAT.paper; lev[p] = 3; }
+      else { const g = groundTexel(Math.floor(wx), Math.floor(wy), t); mat[p] = g[0]; lev[p] = g[1]; }
+      dep[p] = 0; oid[p] = 0;
+    }
+  }
+}
+
+function applyShadow() {
+  const { shad, oid, lev, mat } = F;
+  for (let p = 0; p < shad.length; p++) {
+    if (shad[p] && !oid[p]) lev[p] = Math.max(lev[p] - (mat[p] === MAT.paper ? 2 : 2), 0);
+  }
+  shad.fill(0);
+}
+
+function point(x, y, z, m, l) {
+  const [sx, sy] = toScreen(x, y, z), ix = Math.floor(sx), iy = Math.floor(sy);
+  if (ix < 0 || iy < 0 || ix >= F.W || iy >= F.H) return;
+  const p = iy * F.W + ix, zz = z + 0.25;
+  if (zz <= F.dep[p]) return;
+  F.dep[p] = zz; F.mat[p] = m; F.lev[p] = l; F.oid[p] = 250;
+}
+
+// contorno: escurece o pixel de objeto que está na frente de algo bem mais longe (ou do chão)
+function outline() {
+  const { W, H, dep, oid, lev, dark } = F;
+  dark.fill(0);
+  const key = (p, y) => (y + dep[p]) / cam.f + dep[p];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x;
+    if (!oid[p] || oid[p] === 250) continue;
+    const kp = key(p, y);
+    let d = 0;
+    const test = (q, qy) => {
+      if (!oid[q]) { if (kp - key(q, qy) > 1.5) d = Math.max(d, 3); }
+      else if (oid[q] !== 250 && kp - key(q, qy) > 6) d = Math.max(d, 2);
+    };
+    if (x > 0) test(p - 1, y); if (x < W - 1) test(p + 1, y);
+    if (y > 0) test(p - W, y - 1); if (y < H - 1) test(p + W, y + 1);
+    dark[p] = d;
+  }
+  for (let p = 0; p < lev.length; p++) if (dark[p]) lev[p] = Math.max(lev[p] - dark[p], 0);
+}
+
+function paint() {
+  const { mat, lev, px } = F;
+  for (let p = 0; p < px.length; p++) {
+    const m = mat[p], l = lev[p], nl = NLEV[m];
+    px[p] = LUT[m * MAXL + (l < 0 ? 0 : l >= nl ? nl - 1 : l)];
+  }
+  return F.img;
+}
+
+// ============================================================================================================
+// Modelos (originais desta POC)
+// ============================================================================================================
+
+/** O pet: um dinossaurinho original, menta com barriga creme, espinhos e crista coral. Frente para +y. */
+function petModel(mode, phase) {
+  const v = new Vox(40, 46, 48, 20, 24);
+  const TAU = Math.PI * 2, s = Math.sin(phase * TAU), c = Math.cos(phase * TAU);
+  const walk = mode === "walk";
+  const bz = walk ? Math.abs(s) * 1.0 : mode === "idle" ? phase * 0.9 : 0;    // no idle, phase = respiração 0..1
+  for (const side of [-1, 1]) {                                                 // pernas e pés
+    const sw = walk ? side * s : 0, lift = walk ? Math.max(0, side * c) * 1.8 : 0;
+    const fy = 1.2 + sw * 3.2, fz = 2.3 + lift;
+    const foot = ell(side * 5.2, fy + 1.2, fz, 3.6, 4.6, 2.4);
+    v.put(foot, "mint", { tw: -1 });
+    v.put(and(foot, (X, Y) => Y > fy + 3.4), "cream");
+    v.put(ell(side * 5, sw * 1.6, 6.8 + lift * 0.5 + bz * 0.5, 3.9, 3.9, 4.7), "mint", { tw: -1 });
+  }
+  const sway = walk ? -s * 2.2 : mode === "idle" ? Math.sin(phase * TAU) * 0.6 : 0;   // cauda
+  v.put(seg([0, -6, 9 + bz], [sway, -15.5, 6.5], 4.3, 2.3), "mint", { tw: -1 });
+  v.put(ell(sway * 1.3, -18, 7, 3.1, 3.1, 3.1), "coral");
+  const body = ell(0, 0, 14.5 + bz, 9, 8, 9);                                     // corpo e barriga
+  v.put(body, "mint", { noise: 0 });
+  v.put(and(body, (X, Y, Z) => Y > 3.4 && Math.abs(X) < 6.6 && Z < 21.5 + bz), "cream");
+  for (const [y, z, r] of [[-9.2, 19.5, 2.0], [-9.6, 15, 2.5], [-9.0, 10.6, 2.1]]) {  // espinhos nas costas
+    v.put(ell(0, y, z + bz, 1.4, r * 1.05, r), "coral", { over: false });
+  }
+  for (const side of [-1, 1]) {                                                 // braços
+    const as = walk ? -side * s * 2 : 0;
+    v.put(ell(side * 9, 3 + as, 15.5 + bz, 2.4, 3.3, 2.3), "mint", { tw: -1, over: false });
+    v.put(ell(side * 9.2, 5.8 + as, 15 + bz, 1.8, 1.6, 1.7), "cream", { over: false });
+  }
+  const hz = 29.5 + bz * 1.15;                                                  // cabeça
+  const head = ell(0, 1, hz, 10, 9, 8.5);
+  v.put(head, "mint");
+  const sn = ell(0, 7.6, hz - 3, 6.5, 4.8, 4.3);                                // focinho
+  v.put(sn, "mint");
+  v.put(and(sn, (X, Y, Z) => Z < hz - 3.2), "cream");
+  v.put(and(sn, (X, Y, Z) => Math.abs(Z - (hz - 3.2)) < 0.55 && Y > 9.2), "dark", { tw: 1 });
+  for (const side of [-1, 1]) {
+    v.put(ell(side * 1.9, 11.6, hz - 1.4, 0.7, 0.8, 0.7), "dark");             // narinas
+    v.put(ell(side * 4.3, 8.0, hz + 1.9, 2.3, 2.0, 2.5), "dark", { tw: 1 });  // olhos
+    v.put(ell(side * 3.7, 9.6, hz + 2.8, 0.75, 0.75, 0.8), "white", { glow: 1 });
+    v.put(and(head, ell(side * 7.8, 5.6, hz - 1.6, 1.8, 1.6, 1.3)), "pink");   // bochechas
+    v.put(seg([side * 3.2, -1.5, hz + 6], [side * 6.5, -5.8, hz + 12.5], 2.4, 0.8), "coral", { over: false }); // crista
+  }
+  return compile(v);
+}
+
+function treeModel(seed) {
+  const r = rng(seed), v = new Vox(38, 38, 56, 19, 19);
+  const lean = [(r() - 0.5) * 2, (r() - 0.5) * 2];
+  v.put(seg([0, 0, 0], [lean[0], lean[1], 26], 2.8, 1.8), "bark", { noise: 1, seed });
+  v.put(seg([lean[0] * 0.6, lean[1] * 0.6, 18], [6, 2, 27], 1.2, 0.8), "bark");
+  const blobs = [[0, 0, 32, 11, 11, 9], [5, 3, 38, 7, 7, 6], [-5, -2, 37, 7.5, 7, 6.5], [lean[0], lean[1], 44, 6, 6, 5]];
+  for (const [x, y, z, a, b, cz] of blobs) v.put(ell(x + lean[0], y + lean[1], z, a * (0.9 + r() * 0.2), b, cz), "leaf", { noise: 1, grain: 2, seed });
+  return compile(v);
+}
+
+function rockModel(seed, size) {
+  const r = rng(seed), n = Math.ceil(size * 2.6) + 4, v = new Vox(n, n, Math.ceil(size * 1.6) + 3, n / 2, n / 2);
+  v.put(ell(0, 0, size * 0.35, size * (1 + r() * 0.3), size * (0.8 + r() * 0.3), size * 0.85), "stone", { noise: 1, grain: 2, seed });
+  v.put(ell(size * 0.4, size * 0.2, size * 0.25, size * 0.6, size * 0.6, size * 0.6), "stone", { noise: 1, seed: seed + 1 });
+  return compile(v);
+}
+
+function mushroomModel(seed) {
+  const v = new Vox(16, 16, 16, 8, 8), r = rng(seed);
+  v.put(seg([0, 0, 0], [0.5, 0, 7], 1.8, 1.4), "cream");
+  const capf = and(ell(0.5, 0, 8, 6, 6, 4.5), (X, Y, Z) => Z > 7);
+  v.put(capf, "coral");
+  for (let i = 0; i < 6; i++) {
+    const a = r() * Math.PI * 2, d = 2 + r() * 3;
+    v.put(and(capf, ell(0.5 + Math.cos(a) * d, Math.sin(a) * d, 11.2 - d * 0.35, 1.2, 1.2, 1.2)), "white");
+  }
+  return compile(v);
+}
+
+function bushModel(seed) {
+  const r = rng(seed), v = new Vox(26, 26, 16, 13, 13);
+  for (let i = 0; i < 5; i++) v.put(ell((r() - 0.5) * 10, (r() - 0.5) * 10, 4 + r() * 4, 4.5 + r() * 2, 4.5 + r() * 2, 4 + r() * 2), "leaf", { noise: 1, grain: 2, seed: seed + i });
+  for (let i = 0; i < 4; i++) v.put(ell((r() - 0.5) * 12, (r() - 0.5) * 12, 6 + r() * 4, 0.9, 0.9, 0.9), "pink", { over: true, tw: 1 });
+  return compile(v);
+}
+
+// ============================================================================================================
+// A cena
+// ============================================================================================================
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d", { alpha: false });
+const $ = (id) => document.getElementById(id);
+const S = { pitch: 0.62, gap: 0, zoom: 4, outline: true, turn: true, onlyPet: false };
+const SUN = (() => { const a = 225 * Math.PI / 180, e = 50 * Math.PI / 180; return [Math.cos(e) * Math.cos(a), Math.cos(e) * Math.sin(a), Math.sin(e)]; })();
+
+const t0 = performance.now();
+const PET = { walk: [], idle: [], jump: null };
+for (let i = 0; i < 8; i++) PET.walk.push(petModel("walk", i / 8));
+for (let i = 0; i < 4; i++) PET.idle.push(petModel("idle", [0, 0.5, 1, 0.5][i]));
+PET.jump = petModel("stand", 0);
+const props = [];
+{
+  const r = rng(42);
+  const kinds = [[treeModel(1), 4], [treeModel(2), 4], [treeModel(3), 3], [rockModel(5, 5), 4], [rockModel(6, 3.5), 5], [rockModel(7, 7), 2],
+                 [mushroomModel(8), 6], [bushModel(9), 6], [bushModel(10), 5]];
+  let oid = 10;
+  for (const [model, n] of kinds) for (let i = 0; i < n; i++) {
+    for (let tries = 0; tries < 30; tries++) {
+      const a = r() * Math.PI * 2, d = 28 + Math.sqrt(r()) * (ISLAND - 40), x = Math.cos(a) * d, y = Math.sin(a) * d;
+      if (props.some((p) => Math.hypot(p.x - x, p.y - y) < p.model.radius * 0.55 + model.radius * 0.55)) continue;
+      props.push({ model, x, y, z: 0, yaw: r() * Math.PI * 2, oid: oid++ % 240 + 2, off: null, vis: null, landed: null });
+      break;
+    }
+  }
+}
+const buildMs = performance.now() - t0;
+
+const pet = { x: 0, y: 0, z: 0, vz: 0, h: Math.PI / 2, v: 0, dist: 0, idleT: 0, target: null, wait: 1.5, manualUntil: -1 };
+const keys = new Set();
+let clock = 0, last = performance.now(), dragging = false, dragX = 0, particles = [], stackStart = 0.2;
+
+function layout() {
+  const px = S.zoom, W = Math.ceil(innerWidth / px), H = Math.ceil(innerHeight / px);
+  if (W !== F.W || H !== F.H) { resizeFrame(W, H); canvas.width = W; canvas.height = H; }
+  cam.W = W; cam.H = H;
+  canvas.style.width = W * px + "px"; canvas.style.height = H * px + "px";
+}
+addEventListener("resize", layout);
+
+// empilhamento: as fatias caem uma por uma, de baixo para cima
+function stackAnim(inst, t, delay, dur) {
+  const nz = inst.model.nz, fall = 0.22, height = 60;
+  if (t > stackStart + delay + dur + fall + 0.05) { inst.off = null; inst.vis = null; inst.landed = null; return; }
+  const off = inst.off && inst.off.length === nz ? inst.off : new Float32Array(nz);
+  const vis = inst.vis && inst.vis.length === nz ? inst.vis : new Uint8Array(nz);
+  const landed = inst.landed && inst.landed.length === nz ? inst.landed : new Uint8Array(nz);
+  for (let k = 0; k < nz; k++) {
+    const tl = stackStart + delay + (dur * k) / (nz - 1);
+    const u = (tl - t) / fall;
+    off[k] = u > 0 ? height * Math.min(u, 1) ** 2 : 0;
+    vis[k] = t >= tl - fall ? 1 : 0;
+    landed[k] = t >= tl ? 1 : 0;
+  }
+  inst.off = off; inst.vis = vis; inst.landed = landed;
+}
+
+const angleTo = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+function updatePet(dt) {
+  const c = Math.cos(cam.rot), s = Math.sin(cam.rot);
+  const up = keys.has("KeyW") || keys.has("ArrowUp"), dn = keys.has("KeyS") || keys.has("ArrowDown");
+  const lf = keys.has("KeyA") || keys.has("ArrowLeft"), rt = keys.has("KeyD") || keys.has("ArrowRight");
+  let mx = 0, my = 0;
+  if (up || dn || lf || rt) {
+    pet.manualUntil = clock + 4;
+    const fwd = (up ? 1 : 0) - (dn ? 1 : 0), side = (rt ? 1 : 0) - (lf ? 1 : 0);
+    mx = -s * fwd + c * side; my = -c * fwd - s * side;       // frente = para cima na tela
+  } else if (clock > pet.manualUntil) {                        // passeio sozinho
+    if (!pet.target) {
+      pet.wait -= dt;
+      if (pet.wait <= 0) { const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 110; pet.target = [Math.cos(a) * d, Math.sin(a) * d]; }
+    } else {
+      const dx = pet.target[0] - pet.x, dy = pet.target[1] - pet.y;
+      if (Math.hypot(dx, dy) < 4) { pet.target = null; pet.wait = 1 + Math.random() * 2.5; }
+      else { mx = dx; my = dy; }
+    }
+  }
+  const want = Math.hypot(mx, my) > 0 ? 22 : 0;
+  pet.v += (want - pet.v) * (1 - Math.exp(-6 * dt));
+  if (want) {
+    const hd = Math.atan2(my, mx);
+    pet.h += angleTo(hd - pet.h) * (1 - Math.exp(-8 * dt));
+  }
+  let nx = pet.x + Math.cos(pet.h) * pet.v * dt, ny = pet.y + Math.sin(pet.h) * pet.v * dt;
+  for (const p of props) {                                      // não atravessa os objetos
+    const r = p.model.radius * 0.45 + 5, dx = nx - p.x, dy = ny - p.y, d = Math.hypot(dx, dy);
+    if (d < r && d > 1e-3) { nx = p.x + dx / d * r; ny = p.y + dy / d * r; if (pet.target) { pet.target = null; pet.wait = 0.3; } }
+  }
+  const dc = Math.hypot(nx, ny);
+  if (dc > ISLAND - 14) { nx *= (ISLAND - 14) / dc; ny *= (ISLAND - 14) / dc; pet.target = null; }
+  const step = Math.hypot(nx - pet.x, ny - pet.y);
+  pet.dist += step; pet.x = nx; pet.y = ny;
+  // pulo
+  if (pet.z > 0 || pet.vz > 0) { pet.vz -= 140 * dt; pet.z = Math.max(0, pet.z + pet.vz * dt); if (pet.z === 0) { pet.vz = 0; puff(pet.x, pet.y, 18); } }
+  // poeira dos passos
+  if (pet.v > 6 && pet.z === 0) {
+    const fi = Math.floor(pet.dist / 2.4) % 8;
+    if (fi !== pet.lastStep && (fi === 1 || fi === 5)) { puff(pet.x - Math.cos(pet.h) * 2, pet.y - Math.sin(pet.h) * 2, 4); }
+    pet.lastStep = fi;
+  }
+}
+
+function puff(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 6 + Math.random() * 18;
+    particles.push({ x: x + Math.cos(a) * 3, y: y + Math.sin(a) * 3, z: 0.5, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: 6 + Math.random() * 10, t: 0, life: 0.5 + Math.random() * 0.5 });
+  }
+}
+function updateParticles(dt) {
+  for (const p of particles) { p.t += dt; const d = Math.exp(-3 * dt); p.vx *= d; p.vy *= d; p.vz -= 30 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; }
+  particles = particles.filter((p) => p.z > 0 && p.t < p.life);
+}
+
+function petInst() {
+  let model;
+  if (pet.z > 0) model = PET.jump;
+  else if (pet.v > 3) model = PET.walk[Math.floor(pet.dist / 2.4) % 8];
+  else model = PET.idle[Math.floor(clock * 2.2) % 4];
+  return { model, x: pet.x, y: pet.y, z: pet.z, yaw: pet.h - Math.PI / 2, oid: 1, off: null, vis: null, landed: null };
+}
+
+const shaded = new Map();     // cada modelo é aceso uma vez por quadro e por orientação
+function prepare(inst) {
+  const M = inst.model, cy = Math.cos(-inst.yaw), sy = Math.sin(-inst.yaw);
+  shade(M, [cy * SUN[0] - sy * SUN[1], sy * SUN[0] + cy * SUN[1], SUN[2]]);
+}
+
+let fpsAcc = 0, fpsN = 0, fpsShown = 0;
+function render() {
+  const t = clock;
+  cam.f = S.pitch;
+  const pi = petInst();
+  const k = 1 - Math.exp(-4 * 0.016);
+  cam.x += (pet.x - cam.x) * k; cam.y += (pet.y - cam.y) * k;
+  cam.lift = S.onlyPet ? 20 : 14;
+  drawGround(t, S.onlyPet);
+  const R = Math.hypot(cam.W, cam.H / cam.f) / 2 + 30;
+  const insts = S.onlyPet ? [pi] : [pi, ...props.filter((p) => Math.hypot(p.x - cam.x, p.y - cam.y) < R + p.model.radius)];
+  for (const it of insts) {
+    const d = it === pi ? 0 : 0.15 + Math.hypot(it.x - pet.x, it.y - pet.y) * 0.004;
+    stackAnim(it, t, d, it === pi ? 0.9 : 0.5);
+  }
+  // os objetos compartilham o modelo: acende e desenha cada um em sequência (sombra antes, para todos)
+  for (const it of insts) { prepare(it); shadowInst(it, S.gap, SUN); }
+  applyShadow();
+  for (const it of insts) { prepare(it); drawInst(it, S.gap); }
+  for (const p of particles) point(p.x, p.y, p.z, MAT.cream, 4 + (p.t < 0.2 ? 1 : 0));
+  if (S.outline) outline();
+  ctx.putImageData(paint(), 0, 0);
+}
+
+function step(now) {
+  requestAnimationFrame(step);
+  const dt = Math.min(Math.max((now - last) / 1000, 0), 0.05);
+  last = now; clock += dt;
+  if (S.turn && !dragging && clock > pet.manualUntil) cam.rot += 0.12 * dt;
+  updatePet(dt); updateParticles(dt);
+  const r0 = performance.now(); render(); const ms = performance.now() - r0;
+  fpsAcc += ms; fpsN++;
+  if (now - fpsShown > 500) {
+    $("info").textContent = `${F.W}×${F.H} px de arte · ${(fpsAcc / fpsN).toFixed(1)} ms por quadro · modelos em ${buildMs.toFixed(0)} ms`;
+    fpsAcc = 0; fpsN = 0; fpsShown = now;
+  }
+}
+
+canvas.addEventListener("pointerdown", (e) => { dragging = true; dragX = e.clientX; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = "grabbing"; });
+canvas.addEventListener("pointermove", (e) => { if (!dragging) return; cam.rot += (e.clientX - dragX) * 0.01; dragX = e.clientX; });
+const endDrag = () => { dragging = false; canvas.style.cursor = "grab"; };
+canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
+addEventListener("keydown", (e) => {
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+  if (e.code === "Space" && pet.z === 0) { pet.vz = 48; pet.manualUntil = clock + 4; }
+  keys.add(e.code);
+});
+addEventListener("keyup", (e) => keys.delete(e.code));
+addEventListener("blur", () => keys.clear());
+$("pitch").oninput = (e) => { S.pitch = +e.target.value; };
+$("gap").oninput = (e) => { S.gap = +e.target.value; };
+$("zoom").oninput = (e) => { S.zoom = +e.target.value; layout(); };
+$("outline").onchange = (e) => { S.outline = e.target.checked; };
+$("turn").onchange = (e) => { S.turn = e.target.checked; };
+$("stack").onclick = () => { stackStart = clock + 0.05; };
+$("view").onclick = (e) => { S.onlyPet = !S.onlyPet; e.target.textContent = S.onlyPet ? "Ilha" : "Só o pet"; if (S.onlyPet) { S.zoom = 7; } else { S.zoom = 4; } $("zoom").value = S.zoom; layout(); stackStart = clock + 0.05; };
+
+layout();
+requestAnimationFrame(step);
+window.__poc = { S, pet, cam, F };
+</script>
+</body>
+</html>
