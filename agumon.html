@@ -1132,7 +1132,7 @@ const PET_V1 = { walk: [], idle: [], jump: null };
 for (let i = 0; i < 8; i++) PET_V1.walk.push(petModel("walk", i / 8));
 for (let i = 0; i < 4; i++) PET_V1.idle.push(petModel("idle", [0, 0.5, 1, 0.5][i]));
 PET_V1.jump = petModel("stand", 0);
-// O personagem padrão: o export do dsts-extractor do chr050 (C:\dsts_dados\agumon), servido por fetch.
+// O personagem padrão: o export do dsts-extractor do chr050 (a pasta chr050 dos dados do jogo), servido por fetch.
 const PERSONAGEM_PADRAO = { url: "assets/agumon.glb", altura: 84, nome: "Agumon (DSTS chr050)" };
 PET_V1.nome = "Reserva procedural (menta)"; PET_V1.passo = 2.4; PET_V1.ritmoParado = 2.2;
 // A cena fica interativa enquanto o GLB é baixado e convertido. Se a conversão falhar,
@@ -1507,9 +1507,20 @@ setTimeout(async () => {
     mostrarPet(); stackStart = clock + 0.05;
     $("info").textContent = `Agumon pronto · conversão em ${(performance.now() - started).toFixed(0)} ms`;
   } catch (err) {
-    console.error("Falha ao carregar/converter assets/agumon.glb", err);
-    $("info").textContent = `Agumon GLB indisponível: ${err.message} · usando o pet procedural`;
-    $("petInfo").textContent = `Agumon não carregou (${err.message}). O Agumon está incorporado nesta página; o personagem exibido é a reserva procedural. Confira o erro no console.`;
+    // o assets/agumon.glb é um asset do jogo e fica fora do repositório: sem ele, entra o Mushnub (Quaternius, CC0), que vem junto
+    console.warn("assets/agumon.glb indisponível; usando o Mushnub (CC0)", err);
+    try {
+      const RESERVA = { url: "assets/Mushnub.glb", altura: 48, nome: "Mushnub (Quaternius, CC0)" };
+      PET_MUSH = await loadCharacter(RESERVA.url, RESERVA.altura, RESERVA.nome,
+        (message) => { $("info").textContent = message; $("petInfo").textContent = message; });
+      if (PET === PET_V1) PET = PET_MUSH;
+      mostrarPet(); stackStart = clock + 0.05;
+      $("info").textContent = "Sem o assets/agumon.glb (fica fora do repositório; ver o README) · mostrando o Mushnub (Quaternius, CC0)";
+    } catch (err2) {
+      console.error("Falha ao carregar o Mushnub também", err2);
+      $("info").textContent = `Nenhum modelo carregou: ${err2.message} · usando o pet procedural`;
+      $("petInfo").textContent = `Nem o assets/agumon.glb nem o assets/Mushnub.glb carregaram (${err2.message}). O personagem exibido é a reserva procedural. Confira o erro no console.`;
+    }
   }
 }, 80);
 </script>

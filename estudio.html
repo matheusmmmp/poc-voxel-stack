@@ -173,7 +173,7 @@
 <div id="ui">
   <header id="marca" class="vidro">
     <span class="rotulo">Voxel stack · POC</span>
-    <h1>Agumon <span>em fatias</span></h1>
+    <h1 id="titulo">Agumon <span>em fatias</span></h1>
     <div id="estado"><span class="pilula" id="pMs">— ms</span><span class="pilula" id="pVox">— voxels</span><span class="pilula" id="pArte">— px</span></div>
   </header>
 
@@ -1393,7 +1393,7 @@ const PET_V1 = { walk: [], idle: [], jump: null };
 for (let i = 0; i < 8; i++) PET_V1.walk.push(petModel("walk", i / 8));
 for (let i = 0; i < 4; i++) PET_V1.idle.push(petModel("idle", [0, 0.5, 1, 0.5][i]));
 PET_V1.jump = petModel("stand", 0);
-// O personagem padrão: o export do dsts-extractor do chr050 (C:\dsts_dados\agumon), servido por fetch.
+// O personagem padrão: o export do dsts-extractor do chr050 (a pasta chr050 dos dados do jogo), servido por fetch.
 const PERSONAGEM_PADRAO = { url: "assets/agumon.glb", altura: 84, nome: "Agumon (DSTS chr050)" };
 PET_V1.nome = "Reserva procedural (menta)"; PET_V1.passo = 2.4; PET_V1.ritmoParado = 2.2;
 // A cena fica interativa enquanto o GLB é baixado e convertido. Se a conversão falhar,
@@ -1789,9 +1789,20 @@ setTimeout(async () => {
     mostrarPet(); stackStart = clock + 0.05;
     $("info").textContent = `Agumon pronto · conversão em ${(performance.now() - started).toFixed(0)} ms`;
   } catch (err) {
-    console.error("Falha ao carregar/converter assets/agumon.glb", err);
-    $("info").textContent = `Agumon GLB indisponível: ${err.message} · usando o pet procedural`;
-    $("petInfo").textContent = `Agumon não carregou (${err.message}). O Agumon está incorporado nesta página; o personagem exibido é a reserva procedural. Confira o erro no console.`;
+    // o assets/agumon.glb é um asset do jogo e fica fora do repositório: sem ele, entra o Mushnub (Quaternius, CC0), que vem junto
+    console.warn("assets/agumon.glb indisponível; usando o Mushnub (CC0)", err);
+    try {
+      const RESERVA = { url: "assets/Mushnub.glb", altura: 48, nome: "Mushnub (Quaternius, CC0)" };
+      PET_MUSH = await loadCharacter(RESERVA.url, RESERVA.altura, RESERVA.nome,
+        (message) => { $("info").textContent = message; $("petInfo").textContent = message; });
+      if (PET === PET_V1) PET = PET_MUSH;
+      mostrarPet(); stackStart = clock + 0.05;
+      $("info").textContent = "Sem o assets/agumon.glb (fica fora do repositório; ver o README) · mostrando o Mushnub (Quaternius, CC0)";
+    } catch (err2) {
+      console.error("Falha ao carregar o Mushnub também", err2);
+      $("info").textContent = `Nenhum modelo carregou: ${err2.message} · usando o pet procedural`;
+      $("petInfo").textContent = `Nem o assets/agumon.glb nem o assets/Mushnub.glb carregaram (${err2.message}). O personagem exibido é a reserva procedural. Confira o erro no console.`;
+    }
   }
 }, 80);
 </script>
@@ -1818,7 +1829,8 @@ const NOMES_CURTOS = {
 };
 let abaAtual = "golpes", clipeAtual = null, repetir = false, ultimoTempo = 1, convertendo = false;
 
-const clipePorCodigo = (c) => (P.PET.clipes || []).find((n) => P.codigoClipe(n) === c);
+const nomeChip = (c) => NOMES_CURTOS[c] || String(c).split("|").pop().replace(/_/g, " ");
+const clipePorCodigo = (c) => (P.PET.clipes || []).find((n) => P.codigoClipe(n) === c || n === c);
 function montarAbas() {
   $("abas").replaceChildren(...ABAS.map((a) => {
     const b = document.createElement("button"); b.textContent = a.nome; b.setAttribute("role", "tab");
@@ -1830,11 +1842,11 @@ function montarAbas() {
 function montarChips() {
   const aba = ABAS.find((a) => a.id === abaAtual), todos = P.PET.clipes || [];
   const usados = new Set(ABAS.flatMap((a) => a.clipes || []));
-  const codigos = aba.clipes || todos.map(P.codigoClipe).filter((c) => c && !usados.has(c));
+  const codigos = aba.clipes || todos.map((n) => P.codigoClipe(n) || n).filter((c) => c && !usados.has(c));
   const chips = codigos.filter((c) => clipePorCodigo(c)).map((c) => {
     const b = document.createElement("button"); b.className = "chip"; b.dataset.codigo = c;
     const tecla = P.ATALHOS.indexOf(c);
-    b.innerHTML = `<span class="nome">${NOMES_CURTOS[c] || c}</span><span class="meta"><span class="codigo">${c}</span>${tecla >= 0 ? `<span class="tecla">${tecla + 1}</span>` : ""}</span>`;
+    b.innerHTML = `<span class="nome">${nomeChip(c)}</span><span class="meta"><span class="codigo">${P.codigoClipe(clipePorCodigo(c)) || "clipe"}</span>${tecla >= 0 ? `<span class="tecla">${tecla + 1}</span>` : ""}</span>`;
     b.setAttribute("aria-pressed", c === clipeAtual);
     b.onclick = () => tocar(c);
     return b;
@@ -1856,7 +1868,7 @@ function tocar(c, jaTocado = false) {          // jaTocado: o motor já tocou (a
   const t0 = performance.now(), esperar = () => {
     const a = P.ataque;
     if (a && a.inicio >= P.clock - 0.5 && performance.now() - t0 < 15000 && $("petInfo").textContent.includes(c)) {
-      chip?.classList.remove("carregando"); convertendo = false; avisar(`<b>${NOMES_CURTOS[c] || c}</b> · ${a.frames.length} quadros voxel · ${a.dur.toFixed(2)} s`);
+      chip?.classList.remove("carregando"); convertendo = false; avisar(`<b>${nomeChip(c)}</b> · ${a.frames.length} quadros voxel · ${a.dur.toFixed(2)} s`);
     } else if (performance.now() - t0 < 15000) setTimeout(esperar, 60); else { chip?.classList.remove("carregando"); convertendo = false; }
   };
   setTimeout(esperar, 60);
@@ -1959,8 +1971,9 @@ function atualizarCarga() {
   if (!pronto && P.PET.usados) {
     pronto = true; [...$("etapas").children].forEach((li) => { li.className = "feito"; });
     setTimeout(() => { $("carga").classList.add("saindo"); setTimeout(() => $("carga").classList.add("esconder"), 450); }, 350);
+    if (!(P.PET.clipes || []).some((n) => P.codigoClipe(n))) abaAtual = "cenas";   // um .glb sem os códigos do DSTS: tudo em Cenas
     montarAbas(); montarChips(); irPreset("tres");
-    avisar("<b>Agumon pronto</b> · experimente os golpes 1–9");
+    avisar(abaAtual === "cenas" ? `<b>${P.PET.nome.split(" (")[0]} pronto</b> · as animações estão em Cenas` : "<b>Agumon pronto</b> · experimente os golpes 1–9");
   }
 }
 
@@ -1969,14 +1982,14 @@ let ultimoPet = null, pilulasT = 0;
 function laco(agora) {
   requestAnimationFrame(laco);
   atualizarCarga();
-  if (P.PET !== ultimoPet) { ultimoPet = P.PET; montarAbas(); montarChips(); }
+  if (P.PET !== ultimoPet) { ultimoPet = P.PET; montarAbas(); montarChips(); $("titulo").innerHTML = `${P.PET.nome.split(" (")[0]} <span>em fatias</span>`; }
   // a barra do clipe
   const a = P.ataque; let u = 0, rotulo = "<b>Parado</b> · bn01";
   if (a && (a.repetir ? P.pet.v <= 3 : P.clock < a.inicio + a.dur)) {
     u = (P.clock - a.inicio) / a.dur; u = a.repetir ? u - Math.floor(u) : Math.min(1, Math.max(0, u));
-    rotulo = `<b>${NOMES_CURTOS[clipeAtual] || clipeAtual || "clipe"}</b> · ${clipeAtual || ""}`;
+    rotulo = `<b>${clipeAtual ? nomeChip(clipeAtual) : "clipe"}</b> · ${P.codigoClipe(clipePorCodigo(clipeAtual) || "") || "clipe"}`;
   } else if (P.pet.v > 3) { rotulo = "<b>Correndo</b> · br01"; u = (P.pet.dist / (P.PET.passo * P.PET.walk.length)) % 1; }
-  else if (convertendo) rotulo = `<b>${NOMES_CURTOS[clipeAtual] || clipeAtual}</b> · convertendo em voxels…`;
+  else if (convertendo) rotulo = `<b>${nomeChip(clipeAtual)}</b> · convertendo em voxels…`;
   else if (clipeAtual && clipeAtual !== "bn01" && clipeAtual !== "fq01" && !(a && a.repetir)) { clipeAtual = null; marcarChip(); }
   $("barra").firstElementChild.style.width = `${(u * 100).toFixed(1)}%`;
   if ($("tocando").innerHTML !== rotulo) $("tocando").innerHTML = rotulo;
@@ -2076,9 +2089,10 @@ function desenharFicha({ frente, costas, aberto, placas, fat, GAP }) {
   g.fillStyle = COR.fundo; g.fillRect(0, 0, LW, LH);
   // o título
   g.fillStyle = COR.texto; g.font = fonte(700, u(64)); g.textBaseline = "alphabetic";
-  g.fillText("SPRITE STACKING · FICHA DO ASSET: AGUMON", u(64), u(104));
+  const nomeModelo = P.PET.nome.split(" (")[0], ehAgumon = /agumon/i.test(P.PET.nome);
+  g.fillText(`SPRITE STACKING · FICHA DO ASSET: ${nomeModelo.toUpperCase()}`, u(64), u(104));
   g.fillStyle = COR.texto2; g.font = fonte(400, u(30));
-  g.fillText(`Definição do stack • fatias de ${fat.w}×${fat.h} px • altura: ${fat.n} camadas (eixo Z, Z=0 a Z=${fat.n - 1}) • malha 3D do jogo convertida em voxels no navegador`, u(64), u(152));
+  g.fillText(`Definição do stack • fatias de ${fat.w}×${fat.h} px • altura: ${fat.n} camadas (eixo Z, Z=0 a Z=${fat.n - 1}) • malha 3D ${ehAgumon ? "do jogo " : ""}convertida em voxels no navegador`, u(64), u(152));
   // à esquerda: as fatias numa grade, de baixo (#01) para cima, como na referência
   const AX = u(64), AY = u(250), AW = u(1210), AH = LH - AY - u(90), GAPC = u(10);
   let melhor = null;
@@ -2139,7 +2153,8 @@ function desenharFicha({ frente, costas, aberto, placas, fat, GAP }) {
   }
   // o rodapé: o crédito e a origem
   g.fillStyle = COR.texto3; g.font = fonte(400, u(20));
-  g.fillText("Agumon © Bandai Namco · modelo de Digimon Story Time Stranger (chr050), convertido para demonstração técnica · POC voxel stack, render do próprio motor", u(64), LH - u(36));
+  g.fillText(ehAgumon ? "Agumon © Bandai Namco · modelo de Digimon Story Time Stranger (chr050), convertido para demonstração técnica · POC voxel stack, render do próprio motor"
+                       : `${P.PET.nome} · POC voxel stack, render do próprio motor`, u(64), LH - u(36));
   return cv;
 }
 async function mostrarFicha() {

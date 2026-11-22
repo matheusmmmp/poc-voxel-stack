@@ -83,7 +83,7 @@ A fatia é desenhada ao contrário: para cada pixel da tela dentro da caixa da f
 ## 5. O Agumon do DSTS com textura (`agumon.html`, 2026-11-21)
 
 Abra http://localhost:8820/agumon.html. O modelo é `assets/agumon.glb`, o export do dsts-extractor do chr050 (os arquivos de
-`C:\dsts_dados\agumon`; o mesmo export de `Assets/kits3d/dsts/agumon.glb`). Fica só local: são assets do jogo.
+a pasta chr050 dos dados do jogo; o mesmo export usado no mapa AC do DigiLab). Fica só local: são assets do jogo.
 
 **Por que a versão anterior (o zip) saía sem textura:**
 - o export traz a malha `outline` (papel `outline_inflation`): o casco do contorno do jogo, sem textura, que envolve o corpo todo.
@@ -148,7 +148,7 @@ Conferido depois: normais para fora (média de N·(p − centro) = +8,6), nenhum
 - o brilho é fixo, não acompanha a câmera como o matcap;
 - a pose do print é de cena; a mais parecida aqui é a vitória (`bv01`), com a boca aberta no meio do clipe.
 
-**Dentes e contorno grosso (2026-11-21, pedido do Matheus: "faz os dentes e o contorno mais grosso igual ao jogo").** Mesmo
+**Dentes e contorno grosso (2026-11-21).** Mesmo
 enquadramento da validação; capturas `capturas_validacao/dentes_antes.png`, `dentes_depois.png`, `dentes_depois_boca_bv01.png`
 e `dentes_contorno_lado_a_lado.png` (a boca aberta de antes é a `depois_boca_bv01.png` da validação, mesma pose). Cópia de
 antes: `agumon_antes_dentes.html`.
@@ -174,7 +174,7 @@ pesam além do ruído; o render já estava perto dos 10 ms antes deste passo.
 Ainda difere: os dentes são pontas de 1–2 pixels (no jogo são triângulos nítidos); a linha interna segue mais fina que a do
 jogo (engrossar ali dobra o chuvisco dos degraus das fatias).
 
-**Brilho do olho pela câmera (2026-11-21, pedido do Matheus: "Arrume o brilho do olho entao").** O disco branco fixo na
+**Brilho do olho pela câmera (2026-11-21).** O disco branco fixo na
 textura girava junto com o modelo. No jogo o brilho é o domo `eye_shine` (matcap): fica sempre do mesmo lado do olho para quem
 olha. Agora:
 
@@ -202,7 +202,7 @@ trocado por um temporizador de 16 ms (o tempo é o do próprio render, dentro do
 Ainda difere: o brilho tem 2–4 pixels de arte e às vezes sai partido pelo anel da íris (a íris tem ~7 voxels); a variação de
 tamanho entre ângulos é o serrilhado da íris na tela, não pisca nem some.
 
-**Brilho do olho maior, na forma do jogo (2026-11-21, pedido do Matheus: "faz o brilho do olho maior igual ao jogo").** O
+**Brilho do olho maior, na forma do jogo (2026-11-21).** O
 reflexo tinha 2–4 pixels e às vezes saía furado. Agora (`brilhoDosOlhos`, `BRILHO_OLHO`):
 
 1. **Duas formas, como no print:** uma mancha elíptica na parte de cima da íris (centro em (−0,10; −0,34) raios, semieixos
@@ -226,7 +226,7 @@ Ainda difere: no jogo o reflexo é um recorte desenhado (matcap do e01h pelo b01
 íris tem ~7 voxels, então a mancha tem 3–5 px de largura e o centro da íris na tela puxa um pouco para cima, onde a marca de
 íris é mais densa.
 
-**Piscar como o jogo (2026-11-21, pedido do Matheus: "faz o Agumon piscar igual ao jogo").** Como o `pet3d.ts` do mapa AC: a
+**Piscar como o jogo (2026-11-21).** Como o `pet3d.ts` do mapa AC: a
 folha das pálpebras b01 tem 4 linhas (aberto, fechado, sorriso, bravo) e piscar é ir à linha 1, com a íris deslocada junto
 (vec2(0, linha/4) na UV das duas). A linha 1 do p01 é vazia e a do b01 é toda opaca, então o olho fechado é só pálpebra.
 
@@ -252,14 +252,13 @@ por quadro contra 9,9 (painel escondido: cópias temporárias com o rAF num temp
 Ainda difere: a piscada é um corte seco de 0,12 s (como o jogo, que troca a linha sem meio-termo); sorriso e bravo (linhas 2
 e 3) não estão ligados a nenhum estado.
 
-**Sem a mancha grande do brilho (2026-11-21, pedido do Matheus: "retire a mancha na iris dele que ta muito grande").** Saiu a
+**Sem a mancha grande do brilho (2026-11-21).** Saiu a
 mancha elíptica do alto da íris; `BRILHO_OLHO.formas` ficou só com o ponto pequeno (centro em (0,46; 0,44) raios, raio 0,24,
 mínimo 0,5 px). Ele segue a câmera, some de costas e na piscada, como antes. Sem a mancha o olho não fica sem brilho: o ponto
 pinta 1–2 px por olho (medido: 2 px em −0,30π; 2 e 1 px nos dois olhos em −0,05π). Captura do rosto, com e sem a mancha, de
 olho aberto: `capturas_validacao/sem_mancha_rosto.png`. Cópia de antes: `agumon_antes_sem_mancha.html`.
 
-**Controle da câmera (2026-11-21, pedidos do Matheus: "consegue arrumar o controle de camera q ta meio ruim" e "faca conseguir
-controlar a camera com o scroll").** Antes: arrastar na horizontal girava 0,01 rad/px sem suavizar, a câmera girava sozinha por
+**Controle da câmera (2026-11-21).** Antes: arrastar na horizontal girava 0,01 rad/px sem suavizar, a câmera girava sozinha por
 padrão (e voltava 4 s depois de andar), sem zoom pela roda, e a inclinação só pelo slider. Agora (`CAM`, `RODA`,
 `atualizarCamera`):
 
@@ -317,5 +316,5 @@ de costas. As vistas são o render do próprio motor (só os pixels do pet, no p
 
 ## 8. Repositório próprio (2026-11-22)
 
-A POC saiu de `D:\Trab\digilab\poc_voxel_stack` para `D:\Trab\poc-voxel-stack`, num repositório próprio no GitHub. Ficam
+A POC saiu da pasta do projeto DigiLab para um repositório próprio no GitHub. Ficam
 fora do git: o `assets/agumon.glb` (asset do jogo), as capturas da validação, as fichas PNG e as cópias `agumon_antes_*.html`.

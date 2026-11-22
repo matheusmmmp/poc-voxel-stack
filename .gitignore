@@ -3,10 +3,10 @@
 assets/agumon.glb
 
 # Imagens geradas a partir do modelo do jogo (capturas da validação e fichas)
-capturas_validacao/
-ficha_*.png
+/capturas_validacao/
+/ficha_*.png
 
 # Cópias de segurança das rodadas de ajuste (o histórico do git substitui)
-agumon_antes_*.html
+/agumon_antes_*.html
 
 node_modules/
